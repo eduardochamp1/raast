@@ -2,6 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { listVehicles, getPositionHistory } = require('../ssx-client');
 
+// Formata data em tempo LOCAL sem timezone (ex: "2026-01-01T00:00:00")
+// Não usar toISOString() — retorna UTC com 'Z', que diverge do tempo local no Brasil (-3h)
+function _toLocalISO(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 // Cache simples de 5 minutos para evitar chamadas repetidas
 let _vehiclesCache = null;
 let _cacheAt = null;
@@ -58,8 +65,8 @@ router.get('/', async (req, res) => {
     // Buscar última posição de cada veículo (últimas 48h, 1 resultado)
     const now = new Date();
     const since = new Date(now.getTime() - LOOKBACK_MS);
-    const sinceISO = since.toISOString().slice(0, 19);
-    const nowISO = now.toISOString().slice(0, 19);
+    const sinceISO = _toLocalISO(since);
+    const nowISO = _toLocalISO(now);
 
     const results = await Promise.allSettled(
       vehicles.map(async (v) => {
@@ -105,3 +112,4 @@ router.get('/', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.getCachedVehicles = getCachedVehicles;

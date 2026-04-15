@@ -142,6 +142,12 @@ function selectPlate(plate) {
   _selected.add(plate);
   _renderList(_allVehicles);
   _updateTrigger();
+  // Abrir painel para dar feedback visual ao clicar num marcador do mapa
+  const panel   = document.getElementById('dropdownPanel');
+  const trigger = document.getElementById('dropdownTrigger');
+  panel.style.display = 'block';
+  trigger.classList.add('open');
+  document.getElementById('dropdownChevron').textContent = '▲';
 }
 
 function resetDropdown() {

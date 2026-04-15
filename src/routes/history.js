@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { fetchAllPositions } = require('../pagination');
-const { listVehicles } = require('../ssx-client');
+const { getCachedVehicles } = require('./vehicles');
 
 // GET /api/history?plates=ABC-1234,DEF-5678&start=2026-01-01&end=2026-01-31&timeFrom=00:00&timeTo=23:59
 router.get('/', async (req, res) => {
@@ -27,14 +27,8 @@ router.get('/', async (req, res) => {
   const needsTimeFilter = !(timeFrom === '00:00' && timeTo === '23:59');
 
   try {
-    // Buscar mapeamento placa → integrationCode
-    const allVehicles = await (async () => {
-      const raw = await listVehicles();
-      return (Array.isArray(raw) ? raw : []).map(v => ({
-        integrationCode: v.IntegrationCode || v.VehicleIntegrationCode || v.Code,
-        plate: v.LicensePlate || v.Plate || v.plate
-      }));
-    })();
+    // Reutilizar cache compartilhado de vehicles.js (evita chamada extra à SSX)
+    const allVehicles = await getCachedVehicles();
 
     const startISO = `${start}T${timeFrom}:00`;
     const endISO   = `${end}T${timeTo}:00`;
