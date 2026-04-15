@@ -38,3 +38,7 @@ test('ensureFile does NOT overwrite existing file', () => {
   ensureFile('existing.json', { value: 0 });
   expect(readJSON('existing.json', {}).value).toBe(42);
 });
+
+test('ensureFile throws when defaultValue is omitted', () => {
+  expect(() => ensureFile('x.json')).toThrow('ensureFile: defaultValue is required');
+});

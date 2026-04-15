@@ -6,7 +6,8 @@ function getDataDir() {
 }
 
 function ensureDataDir() {
-  if (!fs.existsSync(getDataDir())) fs.mkdirSync(getDataDir(), { recursive: true });
+  const dir = getDataDir();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 function readJSON(filename, defaultValue = []) {
