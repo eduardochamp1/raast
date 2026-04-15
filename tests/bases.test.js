@@ -43,6 +43,28 @@ test('POST /api/bases returns 400 when required fields missing', async () => {
   expect(res.status).toBe(400);
 });
 
+test('POST /api/bases returns 400 for whitespace-only nome', async () => {
+  const res = await request(app).post('/api/bases').send({ nome: '   ', lat: -19.9, lng: -43.9, raio: 300 });
+  expect(res.status).toBe(400);
+});
+
+test('POST /api/bases returns 400 for raio = 0', async () => {
+  const res = await request(app).post('/api/bases').send({ nome: 'X', lat: -19.9, lng: -43.9, raio: 0 });
+  expect(res.status).toBe(400);
+});
+
+test('POST /api/bases returns 400 for lat out of bounds', async () => {
+  const res = await request(app).post('/api/bases').send({ nome: 'X', lat: 91, lng: -43.9, raio: 100 });
+  expect(res.status).toBe(400);
+});
+
+test('PUT /api/bases/:id returns 400 for raio = -5', async () => {
+  const ds = require('../src/data-store');
+  ds.readJSON.mockReturnValue([{ id: 'abc', nome: 'Base Norte', lat: -19.9, lng: -43.9, raio: 300 }]);
+  const res = await request(app).put('/api/bases/abc').send({ raio: -5 });
+  expect(res.status).toBe(400);
+});
+
 test('PUT /api/bases/:id updates existing base', async () => {
   const ds = require('../src/data-store');
   ds.readJSON.mockReturnValue([{ id: 'abc', nome: 'Base Norte', lat: -19.9, lng: -43.9, raio: 300 }]);
