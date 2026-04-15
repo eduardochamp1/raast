@@ -1,27 +1,29 @@
 const fs   = require('fs');
 const path = require('path');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+function getDataDir() {
+  return process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+}
 
 function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(getDataDir())) fs.mkdirSync(getDataDir(), { recursive: true });
 }
 
 function readJSON(filename, defaultValue = []) {
   ensureDataDir();
-  const filePath = path.join(DATA_DIR, filename);
-  if (!fs.existsSync(filePath)) return defaultValue;
-  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return defaultValue; }
+  try { return JSON.parse(fs.readFileSync(path.join(getDataDir(), filename), 'utf8')); }
+  catch { return defaultValue; }
 }
 
 function writeJSON(filename, data) {
   ensureDataDir();
-  fs.writeFileSync(path.join(DATA_DIR, filename), JSON.stringify(data, null, 2));
+  fs.writeFileSync(path.join(getDataDir(), filename), JSON.stringify(data, null, 2));
 }
 
 function ensureFile(filename, defaultValue) {
+  if (defaultValue === undefined) throw new Error('ensureFile: defaultValue is required');
   ensureDataDir();
-  const filePath = path.join(DATA_DIR, filename);
+  const filePath = path.join(getDataDir(), filename);
   if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, JSON.stringify(defaultValue, null, 2));
 }
 
