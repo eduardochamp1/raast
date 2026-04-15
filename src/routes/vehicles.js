@@ -1,44 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const { listVehicles, getPositionHistory } = require('../ssx-client');
+const { getLastPositions } = require('../ssx-client');
 
-// Formata data em tempo LOCAL sem timezone (ex: "2026-01-01T00:00:00")
-// Não usar toISOString() — retorna UTC com 'Z', que diverge do tempo local no Brasil (-3h)
-function _toLocalISO(date) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-// Cache simples de 5 minutos para evitar chamadas repetidas
-let _vehiclesCache = null;
+// Cache de 5 minutos — evita chamadas repetidas ao carregar a página
+let _cache = null;
 let _cacheAt = null;
 let _inflight = null;
 const CACHE_TTL = 5 * 60 * 1000;
 
-// Janela de busca para "última posição conhecida" — cobre fins de semana e veículos parados
-const LOOKBACK_MS = 48 * 60 * 60 * 1000;
-
+/**
+ * Retorna última posição de todos os veículos via /Controlws/LastPosition/GetLastPositions.
+ * Campos úteis por veículo: TrackedUnitIntegrationCode, TrackedUnit (placa/nome),
+ * Latitude, Longitude, EventDate, Ignition.
+ */
 async function getCachedVehicles() {
-  if (_vehiclesCache && _cacheAt && Date.now() - _cacheAt < CACHE_TTL) {
-    return _vehiclesCache;
-  }
+  if (_cache && _cacheAt && Date.now() - _cacheAt < CACHE_TTL) return _cache;
   if (_inflight) return _inflight;
 
   _inflight = (async () => {
-    const raw = await listVehicles();
-    // A API retorna array de objetos — mapear para campos conhecidos
-    // NOTA: verificar campo exato no primeiro run logando `raw[0]`
-    const vehicles = (Array.isArray(raw) ? raw : []).map(v => ({
-      integrationCode: v.IntegrationCode || v.VehicleIntegrationCode || v.Code,
-      plate: v.LicensePlate || v.Plate || v.plate,
-      description: v.Description || v.Name || ''
-    })).filter(v => v.integrationCode && v.plate);
+    const raw = await getLastPositions();
+    const list = Array.isArray(raw) ? raw : [];
 
-    if (Array.isArray(raw) && raw.length > 0 && vehicles.length === 0) {
-      throw new Error('Vehicle mapping produced zero results — check field name fallbacks. Sample: ' + JSON.stringify(raw[0]));
+    if (list.length === 0) {
+      console.warn('[vehicles] getLastPositions retornou array vazio');
+    } else {
+      console.log('[vehicles] sample raw[0]:', JSON.stringify(list[0]));
     }
 
-    _vehiclesCache = vehicles;
+    const vehicles = list
+      .filter(v => v.TrackedUnitIntegrationCode && (v.TrackedUnit || v.Plate))
+      .map(v => ({
+        integrationCode: String(v.TrackedUnitIntegrationCode),
+        // TrackedUnit pode ser "BEC9H88 - Descricao" — pegar primeiros 8 chars como placa
+        plate: (v.Plate || v.TrackedUnit || '').slice(0, 8).trim(),
+        description: v.TrackedUnit || '',
+        lat: v.Latitude,
+        lng: v.Longitude,
+        lastSeen: v.EventDate || v.UpdateDate || null,
+        status: v.Ignition ? 'moving' : 'stopped'
+      }))
+      .filter(v => v.plate);
+
+    _cache = vehicles;
     _cacheAt = Date.now();
     return vehicles;
   })().finally(() => { _inflight = null; });
@@ -46,67 +49,25 @@ async function getCachedVehicles() {
   return _inflight;
 }
 
-// GET /api/vehicles/list — lista simples de placas para o dropdown
+// GET /api/vehicles/list — placas + integrationCode para o dropdown
 router.get('/list', async (req, res) => {
   try {
     const vehicles = await getCachedVehicles();
     res.json(vehicles.map(v => ({ plate: v.plate, integrationCode: v.integrationCode })));
   } catch (err) {
-    console.error('Erro ao listar veículos:', err.message);
+    console.error('Erro ao listar veículos:', err.stack || err.message);
     res.status(500).json({ error: 'Falha ao buscar lista de veículos' });
   }
 });
 
-// GET /api/vehicles — todos os veículos com última posição conhecida
+// GET /api/vehicles — todos com última posição (já vem do getLastPositions, sem chamada extra)
 router.get('/', async (req, res) => {
   try {
     const vehicles = await getCachedVehicles();
-
-    // Buscar última posição de cada veículo (últimas 48h, 1 resultado)
-    const now = new Date();
-    const since = new Date(now.getTime() - LOOKBACK_MS);
-    const sinceISO = _toLocalISO(since);
-    const nowISO = _toLocalISO(now);
-
-    const results = await Promise.allSettled(
-      vehicles.map(async (v) => {
-        try {
-          const positions = await getPositionHistory([
-            { PropertyName: 'TrackedUnitIntegrationCode', Condition: 'Equal', Value: v.integrationCode },
-            { PropertyName: 'PositionDate', Condition: 'GreaterThanOrEqualTo', Value: sinceISO },
-            { PropertyName: 'PositionDate', Condition: 'LessThanOrEqualTo', Value: nowISO }
-          ]);
-
-          const sorted = (Array.isArray(positions) ? positions : [])
-            .sort((a, b) => new Date(b.PositionDate) - new Date(a.PositionDate));
-
-          const latest = sorted[0];
-          if (!latest) return null;
-          if (latest.Latitude == null || latest.Longitude == null) return null;
-
-          return {
-            plate: v.plate,
-            integrationCode: v.integrationCode,
-            lat: latest.Latitude,
-            lng: latest.Longitude,
-            speed: latest.Speed ?? 0,
-            course: latest.Course ?? 0,
-            lastSeen: latest.PositionDate,
-            status: (latest.Speed ?? 0) > 5 ? 'moving' : 'stopped'
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
-
-    const withPosition = results
-      .filter(r => r.status === 'fulfilled' && r.value !== null)
-      .map(r => r.value);
-
+    const withPosition = vehicles.filter(v => v.lat != null && v.lng != null);
     res.json(withPosition);
   } catch (err) {
-    console.error('Erro ao buscar posições:', err.message);
+    console.error('Erro ao buscar posições:', err.stack || err.message);
     res.status(500).json({ error: 'Falha ao buscar posições dos veículos' });
   }
 });

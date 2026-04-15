@@ -7,25 +7,30 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-test('getToken faz POST /Login e retorna token', async () => {
+test('getToken faz POST /Login (urlencoded) e retorna token', async () => {
+  // SSX retorna AccessToken URL-encoded
   axios.post = jest.fn().mockResolvedValue({
-    data: { Token: 'token-abc-123' }
+    data: { AccessToken: 'token-abc-123' }
   });
 
   const { getToken } = require('../src/ssx-auth');
   const token = await getToken();
 
   expect(axios.post).toHaveBeenCalledTimes(1);
+  // Body deve ser string URL-encoded (não objeto JSON)
   expect(axios.post).toHaveBeenCalledWith(
     expect.stringContaining('/Login'),
-    expect.objectContaining({ Username: expect.any(String) })
+    expect.stringContaining('Username='),
+    expect.objectContaining({
+      headers: expect.objectContaining({ 'Content-Type': 'application/x-www-form-urlencoded' })
+    })
   );
   expect(token).toBe('token-abc-123');
 });
 
 test('getToken retorna token cacheado sem nova chamada', async () => {
   axios.post = jest.fn().mockResolvedValue({
-    data: { Token: 'token-cached' }
+    data: { AccessToken: 'token-cached' }
   });
 
   const { getToken } = require('../src/ssx-auth');
@@ -37,7 +42,7 @@ test('getToken retorna token cacheado sem nova chamada', async () => {
 
 test('clearToken força nova autenticação na próxima chamada', async () => {
   axios.post = jest.fn().mockResolvedValue({
-    data: { Token: 'token-novo' }
+    data: { AccessToken: 'token-novo' }
   });
 
   const { getToken, clearToken } = require('../src/ssx-auth');

@@ -14,6 +14,10 @@ async function ssx(path, body) {
       );
       return response.data;
     } catch (err) {
+      // Logar detalhes completos para debug (status + corpo da resposta SSX)
+      if (err.response) {
+        console.error(`[SSX] ${path} → HTTP ${err.response.status}`, JSON.stringify(err.response.data));
+      }
       const wrapped = err instanceof Error ? err : Object.assign(new Error('SSX request failed'), err);
       throw wrapped;
     }
@@ -32,12 +36,16 @@ async function ssx(path, body) {
   }
 }
 
-async function listVehicles() {
-  return ssx('/Administration/Vehicle/v2/List', []);
+async function getLastPositions() {
+  // Endpoint que retorna última posição de todos os veículos do cliente
+  // Body: { ClientIntegrationCode: "18" } — retorna array com TrackedUnitIntegrationCode, TrackedUnit, Lat, Lng, etc.
+  return ssx('/Controlws/LastPosition/GetLastPositions', {
+    ClientIntegrationCode: process.env.SSX_CLIENT_CODE
+  });
 }
 
 async function getPositionHistory(conditions) {
   return ssx('/v3/Tracking/PositionHistory/List', conditions);
 }
 
-module.exports = { ssx, listVehicles, getPositionHistory };
+module.exports = { ssx, getLastPositions, getPositionHistory };

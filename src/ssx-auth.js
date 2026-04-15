@@ -18,20 +18,24 @@ async function _refreshToken() {
   if (missing.length) throw new Error(`SSX Auth: env vars faltando: ${missing.join(', ')}`);
 
   const url = `${process.env.SSX_BASE_URL}/Login`;
-  const body = {
+  // SSX requer application/x-www-form-urlencoded (não JSON)
+  // ClientIntegrationCodeBus NÃO vai no login — causa UnexpectedError
+  const body = new URLSearchParams({
     Username: process.env.SSX_USER,
     Password: process.env.SSX_PASSWORD,
     HashAuth: process.env.SSX_HASH_AUTH,
-    ClientIntegrationCodeBus: process.env.SSX_CLIENT_CODE
-  };
+  }).toString();
 
-  const response = await axios.post(url, body);
+  const response = await axios.post(url, body, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
 
-  // A API SSX retorna o token no campo "Token" (verificar no primeiro run)
-  _token = response.data.Token || response.data.token || response.data.access_token;
-  if (!_token) {
+  // SSX retorna "AccessToken" URL-encoded — precisa de decodeURIComponent
+  const raw = response.data.AccessToken || response.data.Token || response.data.token || response.data.access_token;
+  if (!raw) {
     throw new Error(`SSX Login: campo token não encontrado. Resposta: ${JSON.stringify(response.data)}`);
   }
+  _token = decodeURIComponent(raw);
 
   _fetchedAt = Date.now();
   return _token;
