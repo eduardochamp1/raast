@@ -5,6 +5,7 @@ const path = require('path');
 const vehiclesRouter = require('./src/routes/vehicles');
 const historyRouter  = require('./src/routes/history');
 const basesRouter    = require('./src/routes/bases');
+const groupsRouter   = require('./src/routes/groups');
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/vehicles', vehiclesRouter);
 app.use('/api/history',  historyRouter);
 app.use('/api/bases',    basesRouter);
+app.use('/api/groups',   groupsRouter);
 
 // Diagnóstico: descobre qual endpoint de veículos o usuário tem acesso
 app.get('/api/debug', async (req, res) => {
