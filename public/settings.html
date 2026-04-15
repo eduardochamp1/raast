@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAAST – Configurações</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">⚙️</div>
+      <div>
+        <div class="sidebar-title">Configurações</div>
+        <div class="sidebar-sub">Bases · Grupos · Horário</div>
+      </div>
+    </div>
+
+    <div id="page-nav"></div>
+
+    <div class="sidebar-body">
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="tab-bases">Bases</button>
+        <button class="settings-tab"        data-tab="tab-grupos">Grupos</button>
+        <button class="settings-tab"        data-tab="tab-horario">Horário</button>
+      </div>
+
+      <!-- Tab: Bases -->
+      <div id="tab-bases" class="tab-content active">
+        <button class="btn-primary" id="btnAddBase" style="margin-top:0;margin-bottom:10px">+ Nova Base</button>
+        <p id="addModeHint" style="display:none;font-size:11px;color:#f59e0b;margin-bottom:8px">
+          Clique no mapa para posicionar a nova base. <button id="btnCancelAdd" style="color:#fca5a5;background:none;border:none;cursor:pointer;font-size:11px">Cancelar</button>
+        </p>
+        <div id="bases-list"></div>
+      </div>
+
+      <!-- Tab: Grupos -->
+      <div id="tab-grupos" class="tab-content">
+        <div id="groups-list"></div>
+        <div class="field-label" style="margin-top:14px" id="groupFormLabel">Novo Grupo</div>
+        <form id="groupForm" data-edit-id="">
+          <input id="groupName" class="input-field" placeholder="Nome do grupo" style="margin-bottom:8px" />
+          <div class="field-label">Veículos <span style="font-weight:400">(Ctrl+clique para múltiplos)</span></div>
+          <select id="groupPlates" multiple size="6" class="input-field" style="height:auto;padding:4px;font-size:12px"></select>
+          <button type="button" id="btnSaveGroup" class="btn-primary" style="margin-top:8px">Adicionar Grupo</button>
+          <button type="button" id="btnCancelEdit" class="btn-secondary" style="display:none">Cancelar Edição</button>
+        </form>
+      </div>
+
+      <!-- Tab: Horário -->
+      <div id="tab-horario" class="tab-content">
+        <div class="field-label">Janela noturna</div>
+        <div class="time-row" style="margin-bottom:10px">
+          <span style="font-size:12px;color:var(--text-muted);flex-shrink:0">Das</span>
+          <input id="timeFrom" type="time" class="input-field" />
+          <span class="time-sep">às</span>
+          <input id="timeTo" type="time" class="input-field" />
+        </div>
+        <div id="timeCrossWarn" class="error-msg" style="display:none">
+          ⚠️ Janela cruza meia-noite — isso é normal para horários como 22h → 06h.
+        </div>
+        <button class="btn-primary" id="btnSaveTime" style="margin-top:8px">Salvar Horário</button>
+        <span id="timeSaveMsg" style="font-size:12px;color:#22c55e;margin-left:8px"></span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAP (always visible; bases displayed here) -->
+  <main class="map-container">
+    <div id="settings-map" style="width:100%;height:100%"></div>
+  </main>
+
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/js/nav.js"></script>
+<script src="/js/settings.js"></script>
+<script>initNav('settings');</script>
+</body>
+</html>
