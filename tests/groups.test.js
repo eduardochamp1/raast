@@ -64,6 +64,20 @@ test('PUT /api/groups/:id returns 404 when not found', async () => {
   expect(res.status).toBe(404);
 });
 
+test('PUT /api/groups/:id returns 400 for whitespace-only nome', async () => {
+  const ds = require('../src/data-store');
+  ds.readJSON.mockReturnValue([{ id: 'g1', nome: 'Admins', placas: ['PWZ-0E13'] }]);
+  const res = await request(app).put('/api/groups/g1').send({ nome: '   ' });
+  expect(res.status).toBe(400);
+});
+
+test('PUT /api/groups/:id returns 400 for non-string nome', async () => {
+  const ds = require('../src/data-store');
+  ds.readJSON.mockReturnValue([{ id: 'g1', nome: 'Admins', placas: ['PWZ-0E13'] }]);
+  const res = await request(app).put('/api/groups/g1').send({ nome: 42 });
+  expect(res.status).toBe(400);
+});
+
 test('DELETE /api/groups/:id removes group', async () => {
   const ds = require('../src/data-store');
   ds.readJSON.mockReturnValue([{ id: 'g1', nome: 'Admins', placas: [] }]);

@@ -24,8 +24,13 @@ router.put('/:id', (req, res) => {
   const idx    = groups.findIndex(g => g.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Grupo não encontrado' });
   const { nome, placas } = req.body;
-  const newNome  = nome   != null ? (typeof nome === 'string' ? nome.trim() : groups[idx].nome) : groups[idx].nome;
-  const newPlacas = placas != null ? placas : groups[idx].placas;
+  // Validate nome if provided
+  if (nome != null) {
+    if (typeof nome !== 'string' || nome.trim() === '')
+      return res.status(400).json({ error: 'nome deve ser uma string não vazia' });
+  }
+  const newNome   = nome   != null ? nome.trim()  : groups[idx].nome;
+  const newPlacas = placas != null ? placas        : groups[idx].placas;
   groups[idx] = { ...groups[idx], nome: newNome, placas: newPlacas };
   writeJSON('groups.json', groups);
   res.json(groups[idx]);
