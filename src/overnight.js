@@ -13,6 +13,9 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
+// IMPORTANT: All date/time operations here use the server's LOCAL wall-clock time.
+// Do NOT mix these helpers with UTC-based operations (Date.toISOString(), 'Z'-suffix strings).
+// This is intentional — SSX API expects local time without timezone offset.
 function toLocalISO(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
        + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;

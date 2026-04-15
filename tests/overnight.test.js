@@ -76,3 +76,29 @@ test('uses median position (not first or last)', async () => {
   const result = await analyzeVehicleNight('123', '2026-04-15', BASES, CONFIG);
   expect(result.situacao).toBe('fora'); // median is in SP, far from BH base
 });
+
+test('analyzeVehicleNight: even-length positions uses upper-median (index = length/2)', async () => {
+  // 4 positions: indices 0,1 near BH base, index 2 (upper-median) in SP, index 3 near BH
+  fetchAllPositions.mockResolvedValue([
+    { Latitude: -19.913, Longitude: -43.941, PositionDate: '2026-04-15T22:00:00' },
+    { Latitude: -19.913, Longitude: -43.941, PositionDate: '2026-04-15T23:00:00' },
+    { Latitude: -23.550164, Longitude: -46.633309, PositionDate: '2026-04-16T01:00:00' }, // index 2 = upper-median
+    { Latitude: -19.913, Longitude: -43.941, PositionDate: '2026-04-16T04:00:00' },
+  ]);
+  const result = await analyzeVehicleNight('123', '2026-04-15', BASES, CONFIG);
+  // upper-median (index 2) is in SP → fora
+  expect(result.situacao).toBe('fora');
+});
+
+test('analyzeVehicleNight: calls fetchAllPositions with correct ISO window', async () => {
+  fetchAllPositions.mockResolvedValue([
+    { Latitude: -19.913, Longitude: -43.941, PositionDate: '2026-04-15T23:00:00' },
+  ]);
+  await analyzeVehicleNight('456', '2026-04-15', BASES, CONFIG);
+  // Window: 2026-04-15T22:00:00 → 2026-04-16T06:00:00 (midnight-crossing)
+  expect(fetchAllPositions).toHaveBeenCalledWith(
+    '456',
+    '2026-04-15T22:00:00',
+    '2026-04-16T06:00:00'
+  );
+});
