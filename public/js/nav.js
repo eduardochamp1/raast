@@ -47,6 +47,10 @@ async function _loadAlertCount() {
   } catch { /* silent */ }
 }
 
+function _esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 async function _openAlertPanel() {
   const panel = document.getElementById('alertPanel');
   panel.classList.add('open');
@@ -62,10 +66,10 @@ async function _openAlertPanel() {
     }
     list.innerHTML = alerts.map(a => `
       <div class="alert-item">
-        <div class="alert-item-plate">${a.placa}</div>
-        <div class="alert-item-info">${a.grupo || ''} · ${a.data}</div>
+        <div class="alert-item-plate">${_esc(a.placa)}</div>
+        <div class="alert-item-info">${_esc(a.grupo)} · ${_esc(a.data)}</div>
         ${a.lat != null ? `<div class="alert-item-info">📍 ${a.lat.toFixed(4)}, ${a.lng.toFixed(4)}</div>` : ''}
-        <a href="/overnight.html?date=${a.data}" class="alert-item-link">Ver no relatório →</a>
+        <a href="/overnight.html?date=${_esc(a.data)}" class="alert-item-link">Ver no relatório →</a>
       </div>
     `).join('');
   } catch {
