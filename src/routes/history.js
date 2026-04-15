@@ -16,6 +16,16 @@ router.get('/', async (req, res) => {
     return res.status(400).json({ error: 'Informe ao menos uma placa' });
   }
 
+  const timeFormatRe = /^\d{2}:\d{2}$/;
+  if (!timeFormatRe.test(timeFrom) || !timeFormatRe.test(timeTo)) {
+    return res.status(400).json({ error: 'Formato inválido para timeFrom/timeTo. Use HH:MM' });
+  }
+  const [fromH, fromM] = timeFrom.split(':').map(Number);
+  const [toH, toM]     = timeTo.split(':').map(Number);
+  const fromMinutes = fromH * 60 + fromM;
+  const toMinutes   = toH * 60 + toM;
+  const needsTimeFilter = !(timeFrom === '00:00' && timeTo === '23:59');
+
   try {
     // Buscar mapeamento placa → integrationCode
     const allVehicles = await (async () => {
@@ -39,18 +49,13 @@ router.get('/', async (req, res) => {
 
       const raw = await fetchAllPositions(vehicle.integrationCode, startISO, endISO);
 
-      // Filtrar por horário do dia se necessário
-      const [fromH, fromM] = timeFrom.split(':').map(Number);
-      const [toH, toM]     = timeTo.split(':').map(Number);
-      const fromMinutes = fromH * 60 + fromM;
-      const toMinutes   = toH * 60 + toM;
-      const needsTimeFilter = !(timeFrom === '00:00' && timeTo === '23:59');
-
       const positions = raw
         .filter(p => {
+          if (p.Latitude == null || p.Longitude == null) return false;
           if (!needsTimeFilter) return true;
-          const d = new Date(p.PositionDate);
-          const mins = d.getHours() * 60 + d.getMinutes();
+          const timePart = p.PositionDate ? p.PositionDate.slice(11, 16) : '00:00';
+          const [h, m] = timePart.split(':').map(Number);
+          const mins = h * 60 + m;
           return mins >= fromMinutes && mins <= toMinutes;
         })
         .map(p => ({
@@ -68,18 +73,25 @@ router.get('/', async (req, res) => {
     const results = await Promise.allSettled(fetchPromises);
 
     const response = {};
-    for (const r of results) {
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const plate = plateList[i];
       if (r.status === 'fulfilled') {
-        response[r.value.plate] = {
+        response[plate] = {
           positions: r.value.positions,
           error: r.value.error || null
+        };
+      } else {
+        response[plate] = {
+          positions: [],
+          error: r.reason?.message || 'Erro ao buscar posições'
         };
       }
     }
 
     res.json(response);
   } catch (err) {
-    console.error('Erro no histórico:', err.message);
+    console.error('Erro no histórico:', err);
     res.status(500).json({ error: 'Falha ao buscar histórico' });
   }
 });
