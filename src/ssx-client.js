@@ -5,27 +5,30 @@ const { getToken, clearToken } = require('./ssx-auth');
 async function ssx(path, body) {
   const token = await getToken();
 
+  const makeRequest = async (authToken) => {
+    try {
+      const response = await axios.post(
+        `${process.env.SSX_BASE_URL}${path}`,
+        body,
+        { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` } }
+      );
+      return response.data;
+    } catch (err) {
+      const wrapped = err instanceof Error ? err : Object.assign(new Error('SSX request failed'), err);
+      throw wrapped;
+    }
+  };
+
   try {
-    const response = await axios.post(
-      `${process.env.SSX_BASE_URL}${path}`,
-      body,
-      { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } }
-    );
-    return response.data;
+    return await makeRequest(token);
   } catch (err) {
     if (err.response && err.response.status === 401) {
       // Token expirado: renovar e tentar uma vez
       clearToken();
       const newToken = await getToken();
-      const retry = await axios.post(
-        `${process.env.SSX_BASE_URL}${path}`,
-        body,
-        { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${newToken}` } }
-      );
-      return retry.data;
+      return await makeRequest(newToken);
     }
-    const wrapped = err instanceof Error ? err : Object.assign(new Error('SSX request failed'), err);
-    throw wrapped;
+    throw err;
   }
 }
 

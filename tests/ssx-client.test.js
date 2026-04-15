@@ -41,6 +41,14 @@ test('ssx renova token e retenta em caso de 401', async () => {
   expect(clearToken).toHaveBeenCalledTimes(1);
   expect(axios.post).toHaveBeenCalledTimes(2);
   expect(result).toEqual([{ Plate: 'DEF-5678' }]);
+  // Verify the retry used the new token
+  expect(axios.post).toHaveBeenNthCalledWith(2,
+    expect.any(String),
+    [],
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer novo-token' })
+    })
+  );
 });
 
 test('ssx lança erro em status != 401', async () => {
