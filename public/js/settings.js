@@ -3,6 +3,11 @@ let _map        = null;
 let _addMode    = false;
 let _tempCircle = null;
 let _baseLayerMap = {}; // id → { circle, label }
+let _lastGroups = [];
+
+function _esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -51,10 +56,16 @@ function initBasesMap() {
 }
 
 async function loadBasesTab() {
-  const res   = await fetch('/api/bases');
-  const bases = await res.json();
-  renderBaseCircles(bases);
-  renderBasesList(bases);
+  try {
+    const res = await fetch('/api/bases');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bases = await res.json();
+    renderBaseCircles(bases);
+    renderBasesList(bases);
+  } catch (err) {
+    console.error('[settings] loadBasesTab:', err);
+    alert('Erro ao carregar bases. Verifique a conexão com o servidor.');
+  }
 }
 
 function renderBaseCircles(bases) {
@@ -94,10 +105,10 @@ function renderBasesList(bases) {
   container.innerHTML = bases.map(b => `
     <div class="group-item" style="margin-bottom:5px">
       <div>
-        <div class="group-item-name">${b.nome}</div>
+        <div class="group-item-name">${_esc(b.nome)}</div>
         <div class="group-item-count">Raio: ${b.raio}m</div>
       </div>
-      <button class="btn-danger" onclick="deleteBase('${b.id}', '${b.nome}')">Excluir</button>
+      <button class="btn-danger" onclick="deleteBase('${_esc(b.id)}', '${_esc(b.nome)}')">Excluir</button>
     </div>
   `).join('');
 }
@@ -149,7 +160,7 @@ function showAddBasePopup(latlng) {
     </div>
   `;
 
-  const popup = L.popup({ closeButton: false })
+  L.popup({ closeButton: false })
     .setLatLng([lat, lng])
     .setContent(div)
     .openOn(_map);
@@ -179,11 +190,11 @@ function showEditBasePopup(base, circle) {
   div.style.minWidth = '190px';
   div.innerHTML = `
     <div style="font-weight:700;margin-bottom:8px;color:#0f172a">Editar Base</div>
-    <input id="editBaseName" value="${base.nome}"
+    <input id="editBaseName" value="${_esc(base.nome)}"
       style="width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;margin-bottom:6px;outline:none" />
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
       <label style="font-size:11px;color:#64748b;flex-shrink:0">Raio (m):</label>
-      <input id="editBaseRadius" type="number" value="${base.raio}"
+      <input id="editBaseRadius" type="number" value="${_esc(base.raio)}"
         style="width:80px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;outline:none" />
     </div>
     <div style="display:flex;gap:6px">
@@ -232,17 +243,25 @@ async function deleteBase(id, nome) {
 
 // ─── Groups Tab ──────────────────────────────────────────────────────────────
 async function loadGroupsTab() {
-  const [groupsRes, vehiclesRes] = await Promise.all([
-    fetch('/api/groups'),
-    fetch('/api/vehicles/list')
-  ]);
-  const groups   = await groupsRes.json();
-  const vehicles = await vehiclesRes.json();
-  renderGroupsList(groups);
-  populatePlateSelect(vehicles, []);
+  try {
+    const [groupsRes, vehiclesRes] = await Promise.all([
+      fetch('/api/groups'),
+      fetch('/api/vehicles/list')
+    ]);
+    if (!groupsRes.ok) throw new Error(`groups HTTP ${groupsRes.status}`);
+    if (!vehiclesRes.ok) throw new Error(`vehicles HTTP ${vehiclesRes.status}`);
+    const groups   = await groupsRes.json();
+    const vehicles = await vehiclesRes.json();
+    renderGroupsList(groups);
+    populatePlateSelect(vehicles, []);
+  } catch (err) {
+    console.error('[settings] loadGroupsTab:', err);
+    alert('Erro ao carregar grupos/veículos. Verifique a conexão com o servidor.');
+  }
 }
 
 function renderGroupsList(groups) {
+  _lastGroups = groups;
   const container = document.getElementById('groups-list');
   if (groups.length === 0) {
     container.innerHTML = '<p style="font-size:11px;color:var(--text-muted)">Nenhum grupo cadastrado.</p>';
@@ -251,12 +270,12 @@ function renderGroupsList(groups) {
   container.innerHTML = groups.map(g => `
     <div class="group-item">
       <div>
-        <div class="group-item-name">${g.nome}</div>
+        <div class="group-item-name">${_esc(g.nome)}</div>
         <div class="group-item-count">${g.placas.length} veículo(s)</div>
       </div>
       <div style="display:flex;gap:6px">
-        <button class="btn-sm" onclick="startEditGroup('${g.id}')">Editar</button>
-        <button class="btn-danger" onclick="deleteGroup('${g.id}', '${g.nome}')">Excluir</button>
+        <button class="btn-sm" onclick="startEditGroup('${_esc(g.id)}')">Editar</button>
+        <button class="btn-danger" onclick="deleteGroup('${_esc(g.id)}', '${_esc(g.nome)}')">Excluir</button>
       </div>
     </div>
   `).join('');
@@ -276,27 +295,27 @@ async function saveGroup() {
   if (placas.length === 0) { alert('Selecione ao menos um veículo.'); return; }
 
   const editId = document.getElementById('groupForm').dataset.editId;
+  let res;
   if (editId) {
-    await fetch(`/api/groups/${editId}`, {
+    res = await fetch(`/api/groups/${editId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nome, placas })
     });
   } else {
-    await fetch('/api/groups', {
+    res = await fetch('/api/groups', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nome, placas })
     });
   }
+  if (!res.ok) { alert('Erro ao salvar grupo. Tente novamente.'); return; }
   cancelGroupEdit();
   loadGroupsTab();
 }
 
-async function startEditGroup(id) {
-  const res    = await fetch('/api/groups');
-  const groups = await res.json();
-  const group  = groups.find(g => g.id === id);
+function startEditGroup(id) {
+  const group = _lastGroups.find(g => g.id === id);
   if (!group) return;
 
   document.getElementById('groupName').value = group.nome;
@@ -305,7 +324,6 @@ async function startEditGroup(id) {
   document.getElementById('btnSaveGroup').textContent   = 'Salvar Alterações';
   document.getElementById('btnCancelEdit').style.display = 'block';
 
-  // Mark selected plates
   Array.from(document.getElementById('groupPlates').options).forEach(opt => {
     opt.selected = group.placas.includes(opt.value);
   });
@@ -329,11 +347,17 @@ async function deleteGroup(id, nome) {
 
 // ─── Time Tab ─────────────────────────────────────────────────────────────────
 async function loadTimeConfig() {
-  const res    = await fetch('/api/overnight/config');
-  const config = await res.json();
-  document.getElementById('timeFrom').value = config.from;
-  document.getElementById('timeTo').value   = config.to;
-  updateTimeCrossWarning();
+  try {
+    const res = await fetch('/api/overnight/config');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const config = await res.json();
+    document.getElementById('timeFrom').value = config.from;
+    document.getElementById('timeTo').value   = config.to;
+    updateTimeCrossWarning();
+  } catch (err) {
+    console.error('[settings] loadTimeConfig:', err);
+    alert('Erro ao carregar configuração de horário.');
+  }
 }
 
 function updateTimeCrossWarning() {
@@ -352,11 +376,12 @@ async function saveTimeConfig() {
   const from = document.getElementById('timeFrom').value;
   const to   = document.getElementById('timeTo').value;
   if (!from || !to) return;
-  await fetch('/api/overnight/config', {
+  const res = await fetch('/api/overnight/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from, to })
   });
+  if (!res.ok) { alert('Erro ao salvar horário. Tente novamente.'); return; }
   const msg = document.getElementById('timeSaveMsg');
   msg.textContent = '✓ Salvo!';
   setTimeout(() => { msg.textContent = ''; }, 2000);
