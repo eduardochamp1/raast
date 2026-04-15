@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSX — Histórico de Veículos</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <div class="app">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">🚛</div>
+        <div>
+          <div class="sidebar-title">SSX Histórico</div>
+          <div class="sidebar-sub">Rastreamento de Veículos</div>
+        </div>
+      </div>
+
+      <div class="sidebar-body">
+
+        <!-- Filtro: Veículos (dropdown suspenso) -->
+        <div class="field-label">Veículos</div>
+        <div class="dropdown-wrapper" id="vehicleDropdown">
+          <div class="dropdown-trigger" id="dropdownTrigger">
+            <div class="dropdown-tags" id="dropdownTags">
+              <span class="dropdown-placeholder">Selecionar veículos...</span>
+            </div>
+            <span class="dropdown-chevron" id="dropdownChevron">▼</span>
+          </div>
+          <div class="dropdown-panel" id="dropdownPanel" style="display:none;">
+            <div class="dropdown-search">
+              <input type="text" id="dropdownSearch" placeholder="🔍  Buscar placa..." autocomplete="off" />
+            </div>
+            <div class="dropdown-actions">
+              <span id="selectAllBtn">Selecionar todos</span>
+              <span id="selectionCount">0 selecionados</span>
+              <span id="clearSelectionBtn">Limpar</span>
+            </div>
+            <div class="dropdown-list" id="dropdownList">
+              <div class="dropdown-loading">Carregando veículos...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filtro: Período -->
+        <div class="field-label">Período</div>
+        <div class="date-row">
+          <input type="date" id="startDate" class="input-field" />
+          <input type="date" id="endDate" class="input-field" />
+        </div>
+
+        <!-- Filtro: Horário -->
+        <div class="field-label">Horário</div>
+        <div class="time-row">
+          <input type="time" id="timeFrom" class="input-field" value="00:00" />
+          <span class="time-sep">→</span>
+          <input type="time" id="timeTo" class="input-field" value="23:59" />
+        </div>
+
+        <!-- Botões -->
+        <button id="searchBtn" class="btn-primary">🔍 Buscar Histórico</button>
+        <button id="clearBtn" class="btn-secondary">✕ Limpar</button>
+
+        <!-- Resumo (oculto até buscar) -->
+        <div id="summarySection" class="summary-section" style="display:none;">
+          <div class="field-label" style="margin-top:16px;">Resumo do Período</div>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">📍</div>
+              <div class="stat-value" id="statPositions">—</div>
+              <div class="stat-label">Posições</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">🛣</div>
+              <div class="stat-value" id="statDistance">—</div>
+              <div class="stat-label">km aprox.</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">⚡</div>
+              <div class="stat-value" id="statMaxSpeed">—</div>
+              <div class="stat-label">km/h máx</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">⏱</div>
+              <div class="stat-value" id="statDuration">—</div>
+              <div class="stat-label">Período</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mensagem de erro -->
+        <div id="errorMsg" class="error-msg" style="display:none;"></div>
+
+      </div>
+    </aside>
+
+    <!-- MAPA -->
+    <main class="map-container">
+      <div id="map"></div>
+      <div id="loadingOverlay" class="loading-overlay" style="display:none;">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Buscando histórico...</div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- App scripts -->
+  <script src="/js/api.js"></script>
+  <script src="/js/map.js"></script>
+  <script src="/js/dropdown.js"></script>
+  <script src="/js/app.js"></script>
+
+</body>
+</html>
