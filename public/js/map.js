@@ -12,8 +12,8 @@ let _legendControl = null;
 function initMap() {
   _map = L.map('map', { zoomControl: true }).setView([-15.8, -47.9], 5);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap © CARTO',
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
     subdomains: 'abcd',
     maxZoom: 19
   }).addTo(_map);
@@ -45,6 +45,9 @@ function plotVehicles(vehicles, onVehicleClick) {
     const marker = L.marker([v.lat, v.lng], {
       icon: makeVehicleIcon(v.status, '#3b82f6')
     });
+
+    // Guardar placa no marcador para filtro posterior
+    marker._plate = v.plate;
 
     const popupHtml = `
       <div class="popup-plate">${v.plate}</div>
@@ -102,17 +105,22 @@ function plotRoutes(historyData, colorMap) {
 }
 
 function dimVehicleMarkers(selectedPlates) {
+  // Remove do mapa todos os marcadores que NÃO estão na lista filtrada
+  const upper = selectedPlates.map(p => p.toUpperCase());
   _vehicleMarkers.forEach(m => {
-    const el = m.getElement();
-    if (!el) return;
-    el.style.opacity = selectedPlates.length === 0 ? '1' : '0.3';
+    const isSelected = upper.includes((m._plate || '').toUpperCase());
+    if (!isSelected && _map.hasLayer(m)) {
+      _map.removeLayer(m);
+    }
   });
 }
 
 function restoreVehicleMarkers() {
+  // Re-adiciona todos os marcadores removidos pelo filtro
   _vehicleMarkers.forEach(m => {
-    const el = m.getElement();
-    if (el) el.style.opacity = '1';
+    if (!_map.hasLayer(m)) {
+      m.addTo(_map);
+    }
   });
 }
 
@@ -134,11 +142,11 @@ function _updateLegend(items) {
   _legendControl = L.control({ position: 'bottomleft' });
   _legendControl.onAdd = () => {
     const div = L.DomUtil.create('div');
-    div.style.cssText = 'background:rgba(15,23,42,.9);border:1px solid #1e293b;border-radius:8px;padding:10px 14px;font-size:12px;color:#94a3b8;';
+    div.style.cssText = 'background:rgba(255,255,255,.95);border:1px solid #cbd5e1;border-radius:8px;padding:10px 14px;font-size:12px;color:#475569;box-shadow:0 2px 8px rgba(0,0,0,.12);';
     div.innerHTML = items.map(i =>
       `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
         <div style="width:20px;height:3px;border-radius:2px;background:${i.color};"></div>
-        <span style="color:#e2e8f0;">${i.plate}</span>
+        <span style="color:#1e293b;font-weight:600;">${i.plate}</span>
       </div>`
     ).join('');
     return div;

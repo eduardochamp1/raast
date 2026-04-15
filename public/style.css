@@ -96,16 +96,18 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; backg
 #map { width: 100%; height: 100%; }
 
 /* Loading overlay */
-.loading-overlay { position: absolute; inset: 0; background: rgba(10,15,30,.6); backdrop-filter: blur(4px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 500; }
-.loading-spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: #3b82f6; border-radius: 50%; animation: spin .8s linear infinite; }
-.loading-text { font-size: 14px; color: var(--text-sub); }
+.loading-overlay { position: absolute; inset: 0; background: rgba(241,245,249,.65); backdrop-filter: blur(3px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 500; }
+.loading-spinner { width: 40px; height: 40px; border: 3px solid #cbd5e1; border-top-color: #3b82f6; border-radius: 50%; animation: spin .8s linear infinite; }
+.loading-text { font-size: 14px; color: #475569; font-weight: 500; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Leaflet overrides */
-.leaflet-popup-content-wrapper { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
-.leaflet-popup-tip { background: var(--bg-card); }
+/* Leaflet overrides — tema claro */
+.leaflet-popup-content-wrapper { background: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
+.leaflet-popup-tip { background: #ffffff; }
 .leaflet-popup-content { margin: 12px 16px; font-size: 13px; }
-.popup-plate { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
-.popup-row { color: var(--text-sub); margin-bottom: 3px; }
-.popup-row span { color: var(--text); }
-.leaflet-control-zoom a { background: var(--bg-card) !important; color: var(--text) !important; border-color: var(--border) !important; }
+.popup-plate { font-weight: 700; font-size: 15px; margin-bottom: 6px; color: #0f172a; }
+.popup-row { color: #64748b; margin-bottom: 3px; }
+.popup-row span { color: #1e293b; font-weight: 500; }
+.leaflet-control-zoom a { background: #ffffff !important; color: #374151 !important; border-color: #d1d5db !important; box-shadow: 0 1px 3px rgba(0,0,0,.1) !important; }
+.leaflet-control-zoom a:hover { background: #f1f5f9 !important; }
+.leaflet-control-attribution { background: rgba(255,255,255,.8) !important; color: #64748b !important; font-size: 10px !important; }
