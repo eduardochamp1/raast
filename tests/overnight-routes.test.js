@@ -44,6 +44,22 @@ test('PUT /api/overnight/config returns 400 when fields missing', async () => {
   expect(res.status).toBe(400);
 });
 
+test('PUT /api/overnight/config returns 400 for invalid time format', async () => {
+  const res = await request(app).put('/api/overnight/config').send({ from: 'banana', to: '06:00' });
+  expect(res.status).toBe(400);
+});
+
+test('GET /api/overnight/report returns 500 when vehicle fetch fails', async () => {
+  ds.readJSON
+    .mockReturnValueOnce([{ id: 'g1', nome: 'Admins', placas: ['PWZ-0E13'] }])
+    .mockReturnValueOnce([])
+    .mockReturnValueOnce({ from: '22:00', to: '06:00' });
+  getCachedVehicles.mockRejectedValue(new Error('upstream timeout'));
+  const res = await request(app)
+    .get('/api/overnight/report?groupId=g1&start=2026-04-14&end=2026-04-14');
+  expect(res.status).toBe(500);
+});
+
 // Report
 test('GET /api/overnight/report returns analyzed results', async () => {
   ds.readJSON

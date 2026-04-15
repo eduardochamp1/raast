@@ -11,49 +11,63 @@ router.get('/config', (req, res) => {
 
 router.put('/config', (req, res) => {
   const { from, to } = req.body;
-  if (!from || !to) return res.status(400).json({ error: 'from e to são obrigatórios' });
+  const timeRe = /^\d{2}:\d{2}$/;
+  if (!from || !to || !timeRe.test(from) || !timeRe.test(to))
+    return res.status(400).json({ error: 'from e to devem estar no formato HH:MM' });
   writeJSON('overnight-config.json', { from, to });
   res.json({ from, to });
 });
 
 // ── Report ────────────────────────────────────────────────────────────────────
+function localDateStr(d) {
+  const y   = d.getFullYear();
+  const m   = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 router.get('/report', async (req, res) => {
   const { groupId, start, end } = req.query;
   if (!groupId || !start || !end)
     return res.status(400).json({ error: 'groupId, start e end são obrigatórios' });
 
-  const groups = readJSON('groups.json', []);
-  const group  = groups.find(g => g.id === groupId);
-  if (!group) return res.status(404).json({ error: 'Grupo não encontrado' });
+  try {
+    const groups = readJSON('groups.json', []);
+    const group  = groups.find(g => g.id === groupId);
+    if (!group) return res.status(404).json({ error: 'Grupo não encontrado' });
 
-  const bases    = readJSON('bases.json', []);
-  const config   = readJSON('overnight-config.json', { from: '22:00', to: '06:00' });
-  const vehicles = await getCachedVehicles();
-  const plateToCode = Object.fromEntries(vehicles.map(v => [v.plate, v.integrationCode]));
+    const bases    = readJSON('bases.json', []);
+    const config   = readJSON('overnight-config.json', { from: '22:00', to: '06:00' });
+    const vehicles = await getCachedVehicles();
+    const plateToCode = Object.fromEntries(vehicles.map(v => [v.plate, v.integrationCode]));
 
-  const results   = [];
-  const startDate = new Date(start);
-  const endDate   = new Date(end);
+    const results   = [];
+    const startDate = new Date(`${start}T12:00:00`); // local noon avoids UTC-offset ambiguity
+    const endDate   = new Date(`${end}T12:00:00`);
 
-  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().slice(0, 10);
-    for (const plate of group.placas) {
-      const integrationCode = plateToCode[plate];
-      if (!integrationCode) {
-        results.push({ placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null });
-        continue;
-      }
-      try {
-        const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
-        results.push({ placa: plate, data: dateStr, ...analysis });
-      } catch (err) {
-        console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
-        results.push({ placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null });
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = localDateStr(d);
+      for (const plate of group.placas) {
+        const integrationCode = plateToCode[plate];
+        if (!integrationCode) {
+          results.push({ placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null });
+          continue;
+        }
+        try {
+          const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
+          results.push({ placa: plate, data: dateStr, ...analysis });
+        } catch (err) {
+          console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
+          results.push({ placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null });
+        }
       }
     }
-  }
 
-  res.json(results);
+    res.json(results);
+  } catch (err) {
+    console.error('[overnight report] unexpected error:', err.message);
+    res.status(500).json({ error: 'Erro interno ao gerar relatório' });
+  }
 });
 
 // ── Alerts — fixed routes BEFORE /:id/visto ───────────────────────────────────
