@@ -4,6 +4,13 @@ const { readJSON, writeJSON } = require('../data-store');
 const { getCachedVehicles }   = require('./vehicles');
 const { analyzeVehicleNight } = require('../overnight');
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function isValidTime(t) {
+  if (!/^\d{2}:\d{2}$/.test(t)) return false;
+  const [h, m] = t.split(':').map(Number);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
+
 // ── Config ──────────────────────────────────────────────────────────────────
 router.get('/config', (req, res) => {
   res.json(readJSON('overnight-config.json', { from: '22:00', to: '06:00' }));
@@ -11,9 +18,8 @@ router.get('/config', (req, res) => {
 
 router.put('/config', (req, res) => {
   const { from, to } = req.body;
-  const timeRe = /^\d{2}:\d{2}$/;
-  if (!from || !to || !timeRe.test(from) || !timeRe.test(to))
-    return res.status(400).json({ error: 'from e to devem estar no formato HH:MM' });
+  if (!from || !to || !isValidTime(from) || !isValidTime(to))
+    return res.status(400).json({ error: 'from e to devem estar no formato HH:MM com valores válidos (00:00–23:59)' });
   writeJSON('overnight-config.json', { from, to });
   res.json({ from, to });
 });
@@ -44,6 +50,12 @@ router.get('/report', async (req, res) => {
     const results   = [];
     const startDate = new Date(`${start}T12:00:00`); // local noon avoids UTC-offset ambiguity
     const endDate   = new Date(`${end}T12:00:00`);
+    if (isNaN(startDate) || isNaN(endDate))
+      return res.status(400).json({ error: 'Datas inválidas. Use o formato YYYY-MM-DD.' });
+    const MAX_DAYS = 31;
+    const daysDiff = Math.round((endDate - startDate) / 86400000);
+    if (daysDiff < 0 || daysDiff > MAX_DAYS)
+      return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias` });
 
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
       const dateStr = localDateStr(d);

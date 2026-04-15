@@ -173,11 +173,12 @@ function showAddBasePopup(latlng) {
     const nome = div.querySelector('#newBaseName').value.trim();
     const raio = Number(div.querySelector('#newBaseRadius').value) || 300;
     if (!nome) { div.querySelector('#newBaseName').style.borderColor = '#ef4444'; return; }
-    await fetch('/api/bases', {
+    const res = await fetch('/api/bases', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nome, lat, lng, raio })
     });
+    if (!res.ok) { alert('Erro ao criar base. Tente novamente.'); return; }
     disableAddMode();
     loadBasesTab();
   });
@@ -222,11 +223,12 @@ function showEditBasePopup(base, circle) {
     const nome = div.querySelector('#editBaseName').value.trim();
     const raio = Number(div.querySelector('#editBaseRadius').value) || base.raio;
     if (!nome) return;
-    await fetch(`/api/bases/${base.id}`, {
+    const res = await fetch(`/api/bases/${base.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nome, raio })
     });
+    if (!res.ok) { alert('Erro ao salvar base. Tente novamente.'); return; }
     _map.closePopup();
     loadBasesTab();
   });
@@ -236,7 +238,8 @@ function showEditBasePopup(base, circle) {
 
 async function deleteBase(id, nome) {
   if (!confirm(`Excluir a base "${nome}"?`)) return;
-  await fetch(`/api/bases/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/bases/${id}`, { method: 'DELETE' });
+  if (!res.ok) { alert('Erro ao excluir base. Tente novamente.'); return; }
   _map.closePopup();
   loadBasesTab();
 }
@@ -341,7 +344,8 @@ function cancelGroupEdit() {
 
 async function deleteGroup(id, nome) {
   if (!confirm(`Excluir grupo "${nome}"?`)) return;
-  await fetch(`/api/groups/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/groups/${id}`, { method: 'DELETE' });
+  if (!res.ok) { alert('Erro ao excluir grupo. Tente novamente.'); return; }
   loadGroupsTab();
 }
 
