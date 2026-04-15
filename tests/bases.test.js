@@ -1,9 +1,6 @@
 const request = require('supertest');
 const express = require('express');
 
-jest.mock('../src/data-store');
-const ds = require('../src/data-store');
-
 // Re-require router AFTER mock is set up
 let app;
 beforeEach(() => {
@@ -23,6 +20,7 @@ test('GET /api/bases returns array', async () => {
   expect(res.status).toBe(200);
   expect(res.body).toHaveLength(1);
   expect(res.body[0].nome).toBe('Base Norte');
+  expect(ds.readJSON).toHaveBeenCalledWith('bases.json', []);
 });
 
 test('POST /api/bases creates base with generated id', async () => {
@@ -34,6 +32,7 @@ test('POST /api/bases creates base with generated id', async () => {
   expect(res.status).toBe(201);
   expect(res.body.nome).toBe('Base Sul');
   expect(res.body.id).toBeDefined();
+  expect(res.body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   expect(ds.writeJSON).toHaveBeenCalledWith('bases.json', expect.arrayContaining([
     expect.objectContaining({ nome: 'Base Sul', raio: 200 })
   ]));
