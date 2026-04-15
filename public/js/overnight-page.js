@@ -4,6 +4,10 @@ let _markers     = [];
 let _baseCircles = [];
 let _lastData    = [];   // kept for CSV export
 
+function _esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   initMap();
@@ -42,7 +46,7 @@ async function loadGroups() {
       return;
     }
     select.innerHTML = '<option value="">Selecione um grupo...</option>'
-      + groups.map(g => `<option value="${g.id}">${g.nome}</option>`).join('');
+      + groups.map(g => `<option value="${_esc(g.id)}">${_esc(g.nome)}</option>`).join('');
   } catch (err) {
     console.error('[overnight] loadGroups:', err);
     document.getElementById('groupSelect').innerHTML = '<option value="">Erro ao carregar grupos</option>';
@@ -64,6 +68,7 @@ async function loadBases() {
       _baseCircles.push(circle);
     });
   } catch (err) {
+    // Base circles are decorative; fail silently so it doesn't block report usage
     console.error('[overnight] loadBases:', err);
   }
 }
@@ -88,8 +93,12 @@ async function generateReport() {
   overlay.style.display = 'flex';
 
   try {
-    const res  = await fetch(`/api/overnight/report?groupId=${groupId}&start=${start}&end=${end}`);
-    if (!res.ok) { throw new Error((await res.json()).error || 'Erro no servidor'); }
+    const res  = await fetch(`/api/overnight/report?groupId=${encodeURIComponent(groupId)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    if (!res.ok) {
+      let msg = 'Erro no servidor';
+      try { msg = (await res.json()).error || msg; } catch { /* non-JSON body */ }
+      throw new Error(msg);
+    }
     const data = await res.json();
     _lastData  = data;
     renderTable(data);
@@ -120,7 +129,7 @@ function renderTable(data) {
     let badge, local;
     if (row.situacao === 'base') {
       badge = `<span class="badge-base">✅ Base</span>`;
-      local = row.base || '—';
+      local = _esc(row.base || '—');
     } else if (row.situacao === 'fora') {
       badge = `<span class="badge-fora">❌ Fora</span>`;
       local = row.lat != null
@@ -131,7 +140,7 @@ function renderTable(data) {
       badge = `<span class="badge-sem-dados">— ${row.situacao === 'erro' ? 'Erro' : 'Sem dados'}</span>`;
       local = '—';
     }
-    return `<tr><td>${row.placa}</td><td>${row.data}</td><td>${badge}</td><td>${local}</td></tr>`;
+    return `<tr><td>${_esc(row.placa)}</td><td>${_esc(row.data)}</td><td>${badge}</td><td>${local}</td></tr>`;
   }).join('');
 
   table.style.display = 'table';
@@ -151,10 +160,10 @@ function renderMarkers(data) {
     const marker = L.circleMarker([row.lat, row.lng], {
       radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2
     }).bindPopup(`
-      <div class="popup-plate">${row.placa}</div>
-      <div class="popup-row">📅 Data: <span>${row.data}</span></div>
+      <div class="popup-plate">${_esc(row.placa)}</div>
+      <div class="popup-row">📅 Data: <span>${_esc(row.data)}</span></div>
       <div class="popup-row">${isBase
-        ? `✅ Base: <span>${row.base}</span>`
+        ? `✅ Base: <span>${_esc(row.base)}</span>`
         : `❌ Fora da base`}
       </div>
       ${!isBase ? `<div class="popup-row">
@@ -175,7 +184,7 @@ function renderMarkers(data) {
 function exportCsv() {
   const rows = [['Placa', 'Data', 'Situação', 'Base', 'Lat', 'Lng']];
   _lastData.forEach(r => {
-    rows.push([r.placa, r.data, r.situacao, r.base || '', r.lat || '', r.lng || '']);
+    rows.push([r.placa, r.data, r.situacao, r.base ?? '', r.lat ?? '', r.lng ?? '']);
   });
   const csv  = '\uFEFF' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
