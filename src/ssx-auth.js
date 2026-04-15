@@ -13,6 +13,10 @@ async function getToken() {
 }
 
 async function _refreshToken() {
+  const missing = ['SSX_BASE_URL','SSX_USER','SSX_PASSWORD','SSX_HASH_AUTH','SSX_CLIENT_CODE']
+    .filter(k => !process.env[k]);
+  if (missing.length) throw new Error(`SSX Auth: env vars faltando: ${missing.join(', ')}`);
+
   const url = `${process.env.SSX_BASE_URL}/Login`;
   const body = {
     Username: process.env.SSX_USER,

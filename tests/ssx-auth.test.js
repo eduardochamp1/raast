@@ -47,3 +47,9 @@ test('clearToken força nova autenticação na próxima chamada', async () => {
 
   expect(axios.post).toHaveBeenCalledTimes(2);
 });
+
+test('getToken lança erro quando resposta não contém campo de token', async () => {
+  axios.post = jest.fn().mockResolvedValue({ data: { status: 'ok' } });
+  const { getToken } = require('../src/ssx-auth');
+  await expect(getToken()).rejects.toThrow('SSX Login: campo token não encontrado');
+});
