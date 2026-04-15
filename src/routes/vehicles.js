@@ -5,25 +5,38 @@ const { listVehicles, getPositionHistory } = require('../ssx-client');
 // Cache simples de 5 minutos para evitar chamadas repetidas
 let _vehiclesCache = null;
 let _cacheAt = null;
+let _inflight = null;
 const CACHE_TTL = 5 * 60 * 1000;
+
+// Janela de busca para "última posição conhecida" — cobre fins de semana e veículos parados
+const LOOKBACK_MS = 48 * 60 * 60 * 1000;
 
 async function getCachedVehicles() {
   if (_vehiclesCache && _cacheAt && Date.now() - _cacheAt < CACHE_TTL) {
     return _vehiclesCache;
   }
+  if (_inflight) return _inflight;
 
-  const raw = await listVehicles();
-  // A API retorna array de objetos — mapear para campos conhecidos
-  // NOTA: verificar campo exato no primeiro run logando `raw[0]`
-  const vehicles = (Array.isArray(raw) ? raw : []).map(v => ({
-    integrationCode: v.IntegrationCode || v.VehicleIntegrationCode || v.Code,
-    plate: v.LicensePlate || v.Plate || v.plate,
-    description: v.Description || v.Name || ''
-  })).filter(v => v.integrationCode && v.plate);
+  _inflight = (async () => {
+    const raw = await listVehicles();
+    // A API retorna array de objetos — mapear para campos conhecidos
+    // NOTA: verificar campo exato no primeiro run logando `raw[0]`
+    const vehicles = (Array.isArray(raw) ? raw : []).map(v => ({
+      integrationCode: v.IntegrationCode || v.VehicleIntegrationCode || v.Code,
+      plate: v.LicensePlate || v.Plate || v.plate,
+      description: v.Description || v.Name || ''
+    })).filter(v => v.integrationCode && v.plate);
 
-  _vehiclesCache = vehicles;
-  _cacheAt = Date.now();
-  return vehicles;
+    if (Array.isArray(raw) && raw.length > 0 && vehicles.length === 0) {
+      throw new Error('Vehicle mapping produced zero results — check field name fallbacks. Sample: ' + JSON.stringify(raw[0]));
+    }
+
+    _vehiclesCache = vehicles;
+    _cacheAt = Date.now();
+    return vehicles;
+  })().finally(() => { _inflight = null; });
+
+  return _inflight;
 }
 
 // GET /api/vehicles/list — lista simples de placas para o dropdown
@@ -44,7 +57,7 @@ router.get('/', async (req, res) => {
 
     // Buscar última posição de cada veículo (últimas 48h, 1 resultado)
     const now = new Date();
-    const since = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    const since = new Date(now.getTime() - LOOKBACK_MS);
     const sinceISO = since.toISOString().slice(0, 19);
     const nowISO = now.toISOString().slice(0, 19);
 
@@ -62,6 +75,7 @@ router.get('/', async (req, res) => {
 
           const latest = sorted[0];
           if (!latest) return null;
+          if (latest.Latitude == null || latest.Longitude == null) return null;
 
           return {
             plate: v.plate,
