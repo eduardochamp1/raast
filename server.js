@@ -7,6 +7,7 @@ const historyRouter  = require('./src/routes/history');
 const basesRouter    = require('./src/routes/bases');
 const groupsRouter   = require('./src/routes/groups');
 const overnightRouter = require('./src/routes/overnight');
+const { initCron } = require('./src/cron');
 
 const app = express();
 
@@ -65,4 +66,5 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚛 SSX Histórico rodando em http://localhost:${PORT}`);
+  initCron();
 });
