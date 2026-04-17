@@ -73,7 +73,7 @@ async function loadBases() {
   }
 }
 
-// ─── Generate report ─────────────────────────────────────────────────────────
+// ─── Generate report (SSE stream) ────────────────────────────────────────────
 async function generateReport() {
   const groupId = document.getElementById('groupSelect').value;
   const start   = document.getElementById('dateStart').value;
@@ -82,30 +82,92 @@ async function generateReport() {
   const errDiv = document.getElementById('reportError');
   errDiv.style.display = 'none';
 
-  if (!groupId) { errDiv.textContent = 'Selecione um grupo.';                 errDiv.style.display = 'block'; return; }
-  if (!start)   { errDiv.textContent = 'Informe a data de início.';           errDiv.style.display = 'block'; return; }
-  if (!end)     { errDiv.textContent = 'Informe a data de fim.';              errDiv.style.display = 'block'; return; }
-  if (start > end) { errDiv.textContent = 'A data de início deve ser ≤ fim.'; errDiv.style.display = 'block'; return; }
+  if (!groupId)    { errDiv.textContent = 'Selecione um grupo.';                 errDiv.style.display = 'block'; return; }
+  if (!start)      { errDiv.textContent = 'Informe a data de início.';           errDiv.style.display = 'block'; return; }
+  if (!end)        { errDiv.textContent = 'Informe a data de fim.';              errDiv.style.display = 'block'; return; }
+  if (start > end) { errDiv.textContent = 'A data de início deve ser ≤ fim.';   errDiv.style.display = 'block'; return; }
 
-  const btn     = document.getElementById('btnGenerate');
-  const overlay = document.getElementById('loadingOverlay');
-  btn.disabled  = true;
-  overlay.style.display = 'flex';
+  const btn        = document.getElementById('btnGenerate');
+  const overlay    = document.getElementById('loadingOverlay');
+  const progBar    = document.getElementById('progressBar');
+  const progText   = document.getElementById('progressText');
+  const progPct    = document.getElementById('progressPct');
+  const progEta    = document.getElementById('progressEta');
+
+  btn.disabled           = true;
+  overlay.style.display  = 'flex';
+  progBar.style.width    = '0%';
+  progText.textContent   = '0 / 0';
+  progPct.textContent    = '0%';
+  progEta.textContent    = '';
+
+  const url = `/api/overnight/report?groupId=${encodeURIComponent(groupId)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+  const collected = [];
+  let startTs = null;
 
   try {
-    const res  = await fetch(`/api/overnight/report?groupId=${encodeURIComponent(groupId)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    const res = await fetch(url);
+
+    // Validation errors come back as JSON (non-SSE) with non-200 status
     if (!res.ok) {
       let msg = 'Erro no servidor';
       try { msg = (await res.json()).error || msg; } catch { /* non-JSON body */ }
       throw new Error(msg);
     }
-    const data = await res.json();
-    _lastData  = data;
-    renderTable(data);
-    renderMarkers(data);
+
+    // Read SSE stream line by line
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete trailing line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const msg = JSON.parse(line.slice(6));
+
+        if (msg.type === 'start') {
+          startTs = Date.now();
+          progText.textContent = `0 / ${msg.total}`;
+
+        } else if (msg.type === 'result') {
+          collected.push(msg.row);
+          const pct = Math.round((msg.done / msg.total) * 100);
+          progBar.style.width  = pct + '%';
+          progText.textContent = `${msg.done} / ${msg.total}`;
+          progPct.textContent  = pct + '%';
+          // ETA: extrapolate from elapsed time
+          if (startTs && msg.done > 5) {
+            const elapsed = (Date.now() - startTs) / 1000;
+            const rate    = msg.done / elapsed;          // items/s
+            const rem     = Math.round((msg.total - msg.done) / rate);
+            progEta.textContent = rem > 60
+              ? `~${Math.round(rem / 60)} min restantes`
+              : `~${rem}s restantes`;
+          }
+
+        } else if (msg.type === 'done') {
+          break outer;
+
+        } else if (msg.type === 'error') {
+          throw new Error(msg.message);
+        }
+      }
+    }
+
+    _lastData = collected;
+    renderTable(collected);
+    renderMarkers(collected);
+
   } catch (err) {
-    errDiv.textContent    = `Erro: ${err.message}`;
-    errDiv.style.display  = 'block';
+    errDiv.textContent   = `Erro: ${err.message}`;
+    errDiv.style.display = 'block';
   } finally {
     btn.disabled          = false;
     overlay.style.display = 'none';

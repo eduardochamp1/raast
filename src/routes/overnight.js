@@ -25,10 +25,9 @@ router.put('/config', (req, res) => {
 });
 
 // ── Report ────────────────────────────────────────────────────────────────────
-// Minimum gap between consecutive SSX requests (ms).
-// At 200 ms ≈ 5 req/s — well within typical API rate limits.
-const THROTTLE_MS = 200;
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+// Number of vehicles processed simultaneously. Natural request latency (~1–2 s)
+// acts as the rate limiter; the retry-on-429 in ssx-client handles bursts.
+const REPORT_CONCURRENCY = 5;
 
 function localDateStr(d) {
   const y   = d.getFullYear();
@@ -42,53 +41,80 @@ router.get('/report', async (req, res) => {
   if (!groupId || !start || !end)
     return res.status(400).json({ error: 'groupId, start e end são obrigatórios' });
 
-  try {
-    const groups = readJSON('groups.json', []);
-    const group  = groups.find(g => g.id === groupId);
-    if (!group) return res.status(404).json({ error: 'Grupo não encontrado' });
+  // ── Validate before opening SSE stream ─────────────────────────────────────
+  const groups = readJSON('groups.json', []);
+  const group  = groups.find(g => g.id === groupId);
+  if (!group) return res.status(404).json({ error: 'Grupo não encontrado' });
 
-    const bases    = readJSON('bases.json', []);
-    const config   = readJSON('overnight-config.json', { from: '22:00', to: '06:00' });
-    const vehicles = await getCachedVehicles();
+  const startDate = new Date(`${start}T12:00:00`);
+  const endDate   = new Date(`${end}T12:00:00`);
+  if (isNaN(startDate) || isNaN(endDate))
+    return res.status(400).json({ error: 'Datas inválidas. Use o formato YYYY-MM-DD.' });
+  const MAX_DAYS = 31;
+  const daysDiff = Math.round((endDate - startDate) / 86400000);
+  if (daysDiff < 0 || daysDiff > MAX_DAYS)
+    return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias` });
+
+  // ── Switch to SSE ───────────────────────────────────────────────────────────
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  try {
+    const bases       = readJSON('bases.json', []);
+    const config      = readJSON('overnight-config.json', { from: '22:00', to: '06:00' });
+    const vehicles    = await getCachedVehicles();
     const plateToCode = Object.fromEntries(vehicles.map(v => [v.plate, v.integrationCode]));
 
-    const results   = [];
-    const startDate = new Date(`${start}T12:00:00`); // local noon avoids UTC-offset ambiguity
-    const endDate   = new Date(`${end}T12:00:00`);
-    if (isNaN(startDate) || isNaN(endDate))
-      return res.status(400).json({ error: 'Datas inválidas. Use o formato YYYY-MM-DD.' });
-    const MAX_DAYS = 31;
-    const daysDiff = Math.round((endDate - startDate) / 86400000);
-    if (daysDiff < 0 || daysDiff > MAX_DAYS)
-      return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias` });
-
-    let firstRequest = true;
+    // Build flat task list: one entry per (vehicle × day)
+    const tasks = [];
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
       const dateStr = localDateStr(d);
-      for (const plate of group.placas) {
-        const integrationCode = plateToCode[plate];
+      for (const plate of group.placas) tasks.push({ plate, dateStr });
+    }
+
+    const total = tasks.length;
+    let done    = 0;
+    let taskIdx = 0;
+
+    send({ type: 'start', total });
+
+    // Concurrency pool — taskIdx++ is safe: synchronous between awaits in Node.js
+    async function worker() {
+      while (taskIdx < tasks.length) {
+        const { plate, dateStr } = tasks[taskIdx++];
+        const integrationCode   = plateToCode[plate];
+        let row;
         if (!integrationCode) {
-          results.push({ placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null });
-          continue;
+          row = { placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null };
+        } else {
+          try {
+            const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
+            row = { placa: plate, data: dateStr, ...analysis };
+          } catch (err) {
+            console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
+            row = { placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null };
+          }
         }
-        // Throttle: pace requests to avoid hitting the SSX 429 rate limit
-        if (!firstRequest) await sleep(THROTTLE_MS);
-        firstRequest = false;
-        try {
-          const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
-          results.push({ placa: plate, data: dateStr, ...analysis });
-        } catch (err) {
-          console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
-          results.push({ placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null });
-        }
+        done++;
+        send({ type: 'result', done, total, row });
       }
     }
 
-    res.json(results);
+    await Promise.all(
+      Array.from({ length: Math.min(REPORT_CONCURRENCY, tasks.length || 1) }, worker)
+    );
+
+    send({ type: 'done', total });
   } catch (err) {
     console.error('[overnight report] unexpected error:', err.message);
-    res.status(500).json({ error: 'Erro interno ao gerar relatório' });
+    send({ type: 'error', message: 'Erro interno ao gerar relatório' });
   }
+
+  res.end();
 });
 
 // ── Alerts — fixed routes BEFORE /:id/visto ───────────────────────────────────

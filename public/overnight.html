@@ -64,6 +64,16 @@
     <div id="loadingOverlay" class="loading-overlay" style="display:none">
       <div class="loading-spinner"></div>
       <div class="loading-text">Gerando relatório...</div>
+      <div id="progressContainer" style="margin-top:14px;width:240px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-bottom:5px">
+          <span id="progressText">0 / 0</span>
+          <span id="progressPct">0%</span>
+        </div>
+        <div style="background:#1e293b;border-radius:4px;height:6px;overflow:hidden">
+          <div id="progressBar" style="width:0%;height:100%;background:#3b82f6;border-radius:4px;transition:width 0.25s ease"></div>
+        </div>
+        <div id="progressEta" style="margin-top:5px;font-size:10px;color:#64748b;text-align:center"></div>
+      </div>
     </div>
   </main>
 

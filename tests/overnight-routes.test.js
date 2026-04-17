@@ -1,6 +1,13 @@
 const request = require('supertest');
 const express = require('express');
 
+// Helper: parse all SSE events from a text/event-stream response body
+function parseSSE(text) {
+  return text.split('\n')
+    .filter(l => l.startsWith('data: '))
+    .map(l => JSON.parse(l.slice(6)));
+}
+
 let app, ds, overnight, getCachedVehicles;
 
 beforeEach(() => {
@@ -49,19 +56,23 @@ test('PUT /api/overnight/config returns 400 for invalid time format', async () =
   expect(res.status).toBe(400);
 });
 
-test('GET /api/overnight/report returns 500 when vehicle fetch fails', async () => {
+test('GET /api/overnight/report streams SSE error event when vehicle fetch fails', async () => {
+  // Validation passes (group found, valid dates), but getCachedVehicles throws.
+  // The endpoint has already opened the SSE stream (200) so it sends { type:'error' }.
   ds.readJSON
-    .mockReturnValueOnce([{ id: 'g1', nome: 'Admins', placas: ['PWZ-0E13'] }])
-    .mockReturnValueOnce([])
-    .mockReturnValueOnce({ from: '22:00', to: '06:00' });
+    .mockReturnValueOnce([{ id: 'g1', nome: 'Admins', placas: ['PWZ-0E13'] }]) // groups
+    .mockReturnValueOnce([])                                                    // bases
+    .mockReturnValueOnce({ from: '22:00', to: '06:00' });                       // config
   getCachedVehicles.mockRejectedValue(new Error('upstream timeout'));
   const res = await request(app)
     .get('/api/overnight/report?groupId=g1&start=2026-04-14&end=2026-04-14');
-  expect(res.status).toBe(500);
+  expect(res.status).toBe(200); // SSE always returns 200 once headers are sent
+  const events = parseSSE(res.text);
+  expect(events.some(e => e.type === 'error')).toBe(true);
 });
 
 // Report
-test('GET /api/overnight/report returns analyzed results', async () => {
+test('GET /api/overnight/report streams analyzed results via SSE', async () => {
   ds.readJSON
     .mockReturnValueOnce([{ id: 'g1', nome: 'Admins', placas: ['PWZ-0E13'] }]) // groups
     .mockReturnValueOnce([])                                                    // bases
@@ -73,10 +84,18 @@ test('GET /api/overnight/report returns analyzed results', async () => {
   const res = await request(app)
     .get('/api/overnight/report?groupId=g1&start=2026-04-14&end=2026-04-14');
   expect(res.status).toBe(200);
-  expect(res.body).toHaveLength(1);
-  expect(res.body[0].situacao).toBe('base');
-  expect(res.body[0].placa).toBe('PWZ-0E13');
-  expect(res.body[0].data).toBe('2026-04-14');
+
+  const events  = parseSSE(res.text);
+  const start   = events.find(e => e.type === 'start');
+  const results = events.filter(e => e.type === 'result');
+  const done    = events.find(e => e.type === 'done');
+
+  expect(start.total).toBe(1);
+  expect(results).toHaveLength(1);
+  expect(results[0].row.situacao).toBe('base');
+  expect(results[0].row.placa).toBe('PWZ-0E13');
+  expect(results[0].row.data).toBe('2026-04-14');
+  expect(done).toBeTruthy();
 });
 
 test('GET /api/overnight/report returns 400 when params missing', async () => {
