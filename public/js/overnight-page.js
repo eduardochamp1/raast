@@ -182,6 +182,11 @@ function renderMarkers(data) {
 
 // ─── XLSX Export ──────────────────────────────────────────────────────────────
 function exportXlsx() {
+  if (_lastData.length === 0) return;
+  if (typeof XLSX === 'undefined') {
+    alert('Biblioteca XLSX não carregada. Verifique sua conexão.');
+    return;
+  }
   const rows = [['Placa', 'Data', 'Situação', 'Base', 'Lat', 'Lng']];
   _lastData.forEach(r => {
     rows.push([r.placa, r.data, r.situacao, r.base ?? '', r.lat ?? '', r.lng ?? '']);
