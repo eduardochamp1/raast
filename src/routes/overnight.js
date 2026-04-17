@@ -30,16 +30,7 @@ router.put('/config', (req, res) => {
 const THROTTLE_MS = 1000; // 1 s between SSX requests  ≈ safe for SSX rate limit
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Maximum days allowed scales with group size to keep report time manageable.
-// Estimates assume ~1.5 s per vehicle (throttle + SSX latency).
-// >200 vehicles → max 1 day  (~5 min for ADM)
-//  >50 vehicles → max 3 days  (~4 min for mid-size groups)
-//    otherwise  → max 31 days
-function maxDaysForGroup(count) {
-  if (count > 200) return 1;
-  if (count >  50) return 3;
-  return 31;
-}
+const MAX_DAYS = 31; // hard ceiling regardless of group size
 
 function localDateStr(d) {
   const y   = d.getFullYear();
@@ -64,13 +55,8 @@ router.get('/report', async (req, res) => {
     return res.status(400).json({ error: 'Datas inválidas. Use o formato YYYY-MM-DD.' });
 
   const daysDiff = Math.round((endDate - startDate) / 86400000);
-  const maxDays  = maxDaysForGroup(group.placas.length);
-  if (daysDiff < 0 || daysDiff >= maxDays)
-    return res.status(400).json({
-      error: `Grupos com ${group.placas.length} veículos suportam no máximo ${maxDays} dia(s) por relatório.`,
-      maxDays,
-      groupSize: group.placas.length
-    });
+  if (daysDiff < 0 || daysDiff >= MAX_DAYS)
+    return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias.` });
 
   // ── Switch to SSE ───────────────────────────────────────────────────────────
   res.setHeader('Content-Type', 'text/event-stream');

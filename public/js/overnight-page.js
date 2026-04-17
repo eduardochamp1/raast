@@ -55,14 +55,15 @@ async function loadGroups() {
   }
 }
 
-// Returns max days the backend will allow for the currently selected group
-function _maxDaysForSelected() {
-  const groupId = document.getElementById('groupSelect').value;
-  const group   = _groups.find(g => g.id === groupId);
-  const n       = group?.placas?.length ?? 0;
-  if (n > 200) return 1;
-  if (n >  50) return 3;
-  return 31;
+// Estimated seconds for the report (throttle 1 s + ~0.6 s SSX latency per request)
+function _estimateSec(vehicles, days) {
+  return Math.round(vehicles * days * 1.6);
+}
+
+function _fmtDuration(sec) {
+  if (sec >= 3600) return `~${Math.round(sec / 3600)} h`;
+  if (sec >=   60) return `~${Math.round(sec / 60)} min`;
+  return `~${sec} s`;
 }
 
 // ─── Draw base circles (always visible) ──────────────────────────────────────
@@ -99,13 +100,19 @@ async function generateReport() {
   if (!end)        { errDiv.textContent = 'Informe a data de fim.';            errDiv.style.display = 'block'; return; }
   if (start > end) { errDiv.textContent = 'A data de início deve ser ≤ fim.'; errDiv.style.display = 'block'; return; }
 
-  // Client-side limit check — mirrors backend maxDaysForGroup()
-  const maxDays = _maxDaysForSelected();
-  const daysDiff = Math.round((new Date(end) - new Date(start)) / 86400000);
-  if (daysDiff >= maxDays) {
-    errDiv.textContent = `Este grupo suporta no máximo ${maxDays} dia(s) por relatório (${daysDiff + 1} selecionados). Reduza o período.`;
-    errDiv.style.display = 'block';
-    return;
+  // Warn user when report will take a long time (> 2 min) — let them confirm
+  const group    = _groups.find(g => g.id === groupId);
+  const nVeh     = group?.placas?.length ?? 0;
+  const nDays    = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
+  const estSec   = _estimateSec(nVeh, nDays);
+  if (estSec > 120) {
+    const ok = window.confirm(
+      `Este relatório vai processar ${(nVeh * nDays).toLocaleString('pt-BR')} consultas ` +
+      `(${nVeh} veículos × ${nDays} dia${nDays > 1 ? 's' : ''}).\n\n` +
+      `Estimativa: ${_fmtDuration(estSec)}.\n\n` +
+      `Deseja continuar?`
+    );
+    if (!ok) return;
   }
 
   const btn        = document.getElementById('btnGenerate');
