@@ -25,6 +25,11 @@ router.put('/config', (req, res) => {
 });
 
 // ── Report ────────────────────────────────────────────────────────────────────
+// Minimum gap between consecutive SSX requests (ms).
+// At 200 ms ≈ 5 req/s — well within typical API rate limits.
+const THROTTLE_MS = 200;
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 function localDateStr(d) {
   const y   = d.getFullYear();
   const m   = String(d.getMonth() + 1).padStart(2, '0');
@@ -57,6 +62,7 @@ router.get('/report', async (req, res) => {
     if (daysDiff < 0 || daysDiff > MAX_DAYS)
       return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias` });
 
+    let firstRequest = true;
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
       const dateStr = localDateStr(d);
       for (const plate of group.placas) {
@@ -65,6 +71,9 @@ router.get('/report', async (req, res) => {
           results.push({ placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null });
           continue;
         }
+        // Throttle: pace requests to avoid hitting the SSX 429 rate limit
+        if (!firstRequest) await sleep(THROTTLE_MS);
+        firstRequest = false;
         try {
           const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
           results.push({ placa: plate, data: dateStr, ...analysis });

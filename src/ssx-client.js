@@ -2,6 +2,15 @@ require('dotenv').config();
 const axios = require('axios');
 const { getToken, clearToken } = require('./ssx-auth');
 
+// ── Rate-limit retry ──────────────────────────────────────────────────────────
+// Maximum number of times to retry a 429 response before giving up.
+const MAX_RETRIES = 4;
+
+// Base delay (ms) for exponential back-off: 2 s → 4 s → 8 s → 16 s
+const RETRY_BASE_MS = 2000;
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 async function ssx(path, body) {
   const token = await getToken();
 
@@ -23,17 +32,46 @@ async function ssx(path, body) {
     }
   };
 
+  // First attempt (with 401 token-refresh fallback, unchanged)
+  let lastErr;
+  let currentToken = token;
   try {
-    return await makeRequest(token);
+    return await makeRequest(currentToken);
   } catch (err) {
     if (err.response && err.response.status === 401) {
-      // Token expirado: renovar e tentar uma vez
       clearToken();
-      const newToken = await getToken();
-      return await makeRequest(newToken);
+      currentToken = await getToken();
+      try {
+        return await makeRequest(currentToken);
+      } catch (err2) {
+        lastErr = err2;
+      }
+    } else {
+      lastErr = err;
     }
-    throw err;
   }
+
+  // Retry loop — only for 429 (rate limited)
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (!lastErr?.response || lastErr.response.status !== 429) throw lastErr;
+
+    // Honour Retry-After header when present (value in seconds)
+    const retryAfterSec = Number(lastErr.response.headers?.['retry-after']);
+    const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+      ? retryAfterSec * 1000
+      : RETRY_BASE_MS * Math.pow(2, attempt - 1); // 2 s, 4 s, 8 s, 16 s
+
+    console.warn(`[SSX] 429 rate-limited — waiting ${Math.round(delayMs / 1000)}s before retry ${attempt}/${MAX_RETRIES}`);
+    await sleep(delayMs);
+
+    try {
+      return await makeRequest(currentToken);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr;
 }
 
 async function getLastPositions() {
