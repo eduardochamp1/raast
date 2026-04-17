@@ -55,9 +55,9 @@ async function loadGroups() {
   }
 }
 
-// Estimated seconds for the report (throttle 1 s + ~0.6 s SSX latency per request)
+// Estimated seconds for the report (throttle 4 s + ~0.5 s SSX latency per request)
 function _estimateSec(vehicles, days) {
-  return Math.round(vehicles * days * 1.6);
+  return Math.round(vehicles * days * 4.5);
 }
 
 function _fmtDuration(sec) {

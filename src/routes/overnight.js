@@ -27,7 +27,10 @@ router.put('/config', (req, res) => {
 // ── Report ────────────────────────────────────────────────────────────────────
 // Sequential (1 worker) + fixed throttle avoids cascading 429s that occur when
 // multiple concurrent workers all get rate-limited and all retry simultaneously.
-const THROTTLE_MS = 1000; // 1 s between SSX requests  ≈ safe for SSX rate limit
+// SSX rate-limit appears to allow ~1 token per 3–4 s (each first attempt gets 429
+// at 1 s throttle; the 2 s retry always succeeds).  4 s gives a safe buffer so the
+// token is always replenished before the next request starts.
+const THROTTLE_MS = 4000;
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 const MAX_DAYS = 31; // hard ceiling regardless of group size
@@ -82,8 +85,8 @@ router.get('/report', async (req, res) => {
     const total = tasks.length;
     let done    = 0;
 
-    // Estimated time: THROTTLE_MS + avg SSX latency (~600 ms) per vehicle
-    const estSec = Math.round(total * (THROTTLE_MS + 600) / 1000);
+    // Estimated time: THROTTLE_MS + avg SSX latency (~500 ms) per request
+    const estSec = Math.round(total * (THROTTLE_MS + 500) / 1000);
     send({ type: 'start', total, estSec });
 
     // ── Sequential loop — avoids cascading 429 retries from concurrent workers ──
