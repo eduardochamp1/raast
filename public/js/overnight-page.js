@@ -2,7 +2,7 @@
 let _map         = null;
 let _markers     = [];
 let _baseCircles = [];
-let _lastData    = [];   // kept for CSV export
+let _lastData    = [];   // kept for XLSX export
 
 function _esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   document.getElementById('btnGenerate').addEventListener('click',  generateReport);
-  document.getElementById('btnExportCsv').addEventListener('click', exportCsv);
+  document.getElementById('btnExportXlsx').addEventListener('click', exportXlsx);
 });
 
 // ─── Map init ─────────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ function renderTable(data) {
     tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:12px">
       Sem dados para o período selecionado.</td></tr>`;
     table.style.display = 'table';
-    document.getElementById('btnExportCsv').style.display = 'none';
+    document.getElementById('btnExportXlsx').style.display = 'none';
     return;
   }
 
@@ -144,7 +144,7 @@ function renderTable(data) {
   }).join('');
 
   table.style.display = 'table';
-  document.getElementById('btnExportCsv').style.display = 'block';
+  document.getElementById('btnExportXlsx').style.display = 'block';
 }
 
 // ─── Map markers ─────────────────────────────────────────────────────────────
@@ -180,19 +180,14 @@ function renderMarkers(data) {
   }
 }
 
-// ─── CSV Export ───────────────────────────────────────────────────────────────
-function exportCsv() {
+// ─── XLSX Export ──────────────────────────────────────────────────────────────
+function exportXlsx() {
   const rows = [['Placa', 'Data', 'Situação', 'Base', 'Lat', 'Lng']];
   _lastData.forEach(r => {
     rows.push([r.placa, r.data, r.situacao, r.base ?? '', r.lat ?? '', r.lng ?? '']);
   });
-  const csv  = '\uFEFF' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement('a'), {
-    href: url,
-    download: `pernoite-${new Date().toISOString().slice(0, 10)}.csv`
-  });
-  a.click();
-  URL.revokeObjectURL(url);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pernoite');
+  XLSX.writeFile(wb, `pernoite-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }

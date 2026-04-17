@@ -6,6 +6,7 @@
   <title>RAAST – Pernoite</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -36,7 +37,7 @@
       </div>
 
       <button id="btnGenerate" class="btn-primary">🔍 Gerar Relatório</button>
-      <button id="btnExportCsv" class="btn-secondary" style="display:none">⬇ Exportar CSV</button>
+      <button id="btnExportXlsx" class="btn-secondary" style="display:none">⬇ Exportar XLSX</button>
 
       <div id="reportError" class="error-msg" style="display:none"></div>
 
