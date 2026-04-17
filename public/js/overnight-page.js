@@ -35,22 +35,34 @@ function initMap() {
 }
 
 // ─── Load groups into select ──────────────────────────────────────────────────
+let _groups = []; // cache for size lookup
+
 async function loadGroups() {
   try {
     const res    = await fetch('/api/groups');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const groups = await res.json();
+    _groups      = await res.json();
     const select = document.getElementById('groupSelect');
-    if (groups.length === 0) {
+    if (_groups.length === 0) {
       select.innerHTML = '<option value="">Nenhum grupo cadastrado</option>';
       return;
     }
     select.innerHTML = '<option value="">Selecione um grupo...</option>'
-      + groups.map(g => `<option value="${_esc(g.id)}">${_esc(g.nome)}</option>`).join('');
+      + _groups.map(g => `<option value="${_esc(g.id)}">${_esc(g.nome)} (${g.placas?.length ?? 0} veículos)</option>`).join('');
   } catch (err) {
     console.error('[overnight] loadGroups:', err);
     document.getElementById('groupSelect').innerHTML = '<option value="">Erro ao carregar grupos</option>';
   }
+}
+
+// Returns max days the backend will allow for the currently selected group
+function _maxDaysForSelected() {
+  const groupId = document.getElementById('groupSelect').value;
+  const group   = _groups.find(g => g.id === groupId);
+  const n       = group?.placas?.length ?? 0;
+  if (n > 200) return 1;
+  if (n >  50) return 3;
+  return 31;
 }
 
 // ─── Draw base circles (always visible) ──────────────────────────────────────
@@ -82,10 +94,19 @@ async function generateReport() {
   const errDiv = document.getElementById('reportError');
   errDiv.style.display = 'none';
 
-  if (!groupId)    { errDiv.textContent = 'Selecione um grupo.';                 errDiv.style.display = 'block'; return; }
-  if (!start)      { errDiv.textContent = 'Informe a data de início.';           errDiv.style.display = 'block'; return; }
-  if (!end)        { errDiv.textContent = 'Informe a data de fim.';              errDiv.style.display = 'block'; return; }
-  if (start > end) { errDiv.textContent = 'A data de início deve ser ≤ fim.';   errDiv.style.display = 'block'; return; }
+  if (!groupId)    { errDiv.textContent = 'Selecione um grupo.';               errDiv.style.display = 'block'; return; }
+  if (!start)      { errDiv.textContent = 'Informe a data de início.';         errDiv.style.display = 'block'; return; }
+  if (!end)        { errDiv.textContent = 'Informe a data de fim.';            errDiv.style.display = 'block'; return; }
+  if (start > end) { errDiv.textContent = 'A data de início deve ser ≤ fim.'; errDiv.style.display = 'block'; return; }
+
+  // Client-side limit check — mirrors backend maxDaysForGroup()
+  const maxDays = _maxDaysForSelected();
+  const daysDiff = Math.round((new Date(end) - new Date(start)) / 86400000);
+  if (daysDiff >= maxDays) {
+    errDiv.textContent = `Este grupo suporta no máximo ${maxDays} dia(s) por relatório (${daysDiff + 1} selecionados). Reduza o período.`;
+    errDiv.style.display = 'block';
+    return;
+  }
 
   const btn        = document.getElementById('btnGenerate');
   const overlay    = document.getElementById('loadingOverlay');
@@ -135,6 +156,11 @@ async function generateReport() {
         if (msg.type === 'start') {
           startTs = Date.now();
           progText.textContent = `0 / ${msg.total}`;
+          if (msg.estSec) {
+            progEta.textContent = msg.estSec > 60
+              ? `Estimativa: ~${Math.round(msg.estSec / 60)} min`
+              : `Estimativa: ~${msg.estSec}s`;
+          }
 
         } else if (msg.type === 'result') {
           collected.push(msg.row);

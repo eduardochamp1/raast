@@ -25,9 +25,21 @@ router.put('/config', (req, res) => {
 });
 
 // ── Report ────────────────────────────────────────────────────────────────────
-// Number of vehicles processed simultaneously. Natural request latency (~1–2 s)
-// acts as the rate limiter; the retry-on-429 in ssx-client handles bursts.
-const REPORT_CONCURRENCY = 5;
+// Sequential (1 worker) + fixed throttle avoids cascading 429s that occur when
+// multiple concurrent workers all get rate-limited and all retry simultaneously.
+const THROTTLE_MS = 1000; // 1 s between SSX requests  ≈ safe for SSX rate limit
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Maximum days allowed scales with group size to keep report time manageable.
+// Estimates assume ~1.5 s per vehicle (throttle + SSX latency).
+// >200 vehicles → max 1 day  (~5 min for ADM)
+//  >50 vehicles → max 3 days  (~4 min for mid-size groups)
+//    otherwise  → max 31 days
+function maxDaysForGroup(count) {
+  if (count > 200) return 1;
+  if (count >  50) return 3;
+  return 31;
+}
 
 function localDateStr(d) {
   const y   = d.getFullYear();
@@ -50,10 +62,15 @@ router.get('/report', async (req, res) => {
   const endDate   = new Date(`${end}T12:00:00`);
   if (isNaN(startDate) || isNaN(endDate))
     return res.status(400).json({ error: 'Datas inválidas. Use o formato YYYY-MM-DD.' });
-  const MAX_DAYS = 31;
+
   const daysDiff = Math.round((endDate - startDate) / 86400000);
-  if (daysDiff < 0 || daysDiff > MAX_DAYS)
-    return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias` });
+  const maxDays  = maxDaysForGroup(group.placas.length);
+  if (daysDiff < 0 || daysDiff >= maxDays)
+    return res.status(400).json({
+      error: `Grupos com ${group.placas.length} veículos suportam no máximo ${maxDays} dia(s) por relatório.`,
+      maxDays,
+      groupSize: group.placas.length
+    });
 
   // ── Switch to SSE ───────────────────────────────────────────────────────────
   res.setHeader('Content-Type', 'text/event-stream');
@@ -78,35 +95,33 @@ router.get('/report', async (req, res) => {
 
     const total = tasks.length;
     let done    = 0;
-    let taskIdx = 0;
 
-    send({ type: 'start', total });
+    // Estimated time: THROTTLE_MS + avg SSX latency (~600 ms) per vehicle
+    const estSec = Math.round(total * (THROTTLE_MS + 600) / 1000);
+    send({ type: 'start', total, estSec });
 
-    // Concurrency pool — taskIdx++ is safe: synchronous between awaits in Node.js
-    async function worker() {
-      while (taskIdx < tasks.length) {
-        const { plate, dateStr } = tasks[taskIdx++];
-        const integrationCode   = plateToCode[plate];
-        let row;
-        if (!integrationCode) {
-          row = { placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null };
-        } else {
-          try {
-            const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
-            row = { placa: plate, data: dateStr, ...analysis };
-          } catch (err) {
-            console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
-            row = { placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null };
-          }
+    // ── Sequential loop — avoids cascading 429 retries from concurrent workers ──
+    let first = true;
+    for (const { plate, dateStr } of tasks) {
+      if (!first) await sleep(THROTTLE_MS);
+      first = false;
+
+      const integrationCode = plateToCode[plate];
+      let row;
+      if (!integrationCode) {
+        row = { placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null };
+      } else {
+        try {
+          const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
+          row = { placa: plate, data: dateStr, ...analysis };
+        } catch (err) {
+          console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
+          row = { placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null };
         }
-        done++;
-        send({ type: 'result', done, total, row });
       }
+      done++;
+      send({ type: 'result', done, total, row });
     }
-
-    await Promise.all(
-      Array.from({ length: Math.min(REPORT_CONCURRENCY, tasks.length || 1) }, worker)
-    );
 
     send({ type: 'done', total });
   } catch (err) {
