@@ -66,6 +66,7 @@ function findLongestStop(sorted) {
       const lat   = slice.reduce((s, p) => s + p.Latitude,  0) / slice.length;
       const lng   = slice.reduce((s, p) => s + p.Longitude, 0) / slice.length;
 
+      // Strict > means first qualifying stop wins ties (chronological tie-break)
       if (!best || durationMs > best.durationMs) {
         best = { lat, lng, durationMs };
       }
@@ -83,7 +84,8 @@ function findLongestStop(sorted) {
  * @returns {{ lat: number, lng: number }}
  */
 function mostFrequentPoint(sorted) {
-  const GRID = 0.002; // ~200 metros em graus
+  if (sorted.length === 0) throw new Error('mostFrequentPoint: sorted array must not be empty');
+  const GRID = 0.002; // ~200–225 m at BR latitudes (rectilinear in degrees, not metres)
   const cells = {};
 
   sorted.forEach(p => {

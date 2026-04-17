@@ -1,6 +1,6 @@
 jest.mock('../src/pagination');
 const { fetchAllPositions } = require('../src/pagination');
-const { analyzeVehicleNight, haversineKm, buildOvernightWindow } = require('../src/overnight');
+const { analyzeVehicleNight, haversineKm, buildOvernightWindow, findLongestStop, mostFrequentPoint } = require('../src/overnight');
 
 const BASES  = [{ id: '1', nome: 'Base BH', lat: -19.912998, lng: -43.940933, raio: 300 }];
 const CONFIG = { from: '22:00', to: '06:00' };
@@ -106,19 +106,17 @@ test('vehicle moving all night (no stop ≥ 30 min) → situacao: fora at most f
   expect(result.lat).toBeCloseTo(-23.550, 1);
 });
 
-test('vehicle with stop exactly at base but < 30 min → fora or base (threshold enforced)', async () => {
+test('vehicle with stop < 30 min at base: no qualifying stop, mostFrequentPoint clusters at base → base', async () => {
+  // Two pings stopped at base coords, only 20 min apart (below 30 min threshold).
+  // findLongestStop returns null (duration < MIN_STOP_MS).
+  // mostFrequentPoint clusters at base coords → base-radius check passes → 'base'.
+  // This is acceptable: the vehicle was spatially at the base for the entire observed window.
   fetchAllPositions.mockResolvedValue([
     stopped(-19.913, -43.941, '2026-04-15T22:00:00'),
-    stopped(-19.913, -43.941, '2026-04-15T22:20:00'),  // 20 min — below threshold
+    stopped(-19.913, -43.941, '2026-04-15T22:20:00'),
   ]);
   const result = await analyzeVehicleNight('123', '2026-04-15', BASES, CONFIG);
-  // No qualifying stop → falls to mostFrequentPoint → coords near base but still classified fora
-  // (mostFrequentPoint returns the cluster, which is at base coords — but since no qualifying
-  //  stop, it still goes through the base check. If the most frequent point happens to be
-  //  within base radius, it returns base. This is acceptable — the vehicle WAS at the base,
-  //  just didn't have enough consecutive Speed=0 pings to form a 30-min interval.)
-  // We only assert it doesn't throw and returns a valid situacao
-  expect(['base', 'fora']).toContain(result.situacao);
+  expect(result.situacao).toBe('base');
   expect(result.lat).not.toBeNull();
 });
 
@@ -133,4 +131,66 @@ test('analyzeVehicleNight: calls fetchAllPositions with correct ISO window', asy
     '2026-04-15T22:00:00',
     '2026-04-16T06:00:00'
   );
+});
+
+// ─── findLongestStop — unit tests ───────────────────────────────────────────
+
+test('findLongestStop: single ping → null (no interval)', () => {
+  const result = findLongestStop([
+    stopped(-19.913, -43.941, '2026-04-15T22:00:00'),
+  ]);
+  expect(result).toBeNull();
+});
+
+test('findLongestStop: two pings exactly 30 min apart → qualifies (boundary)', () => {
+  const result = findLongestStop([
+    stopped(-19.913, -43.941, '2026-04-15T22:00:00'),
+    stopped(-19.913, -43.941, '2026-04-15T22:30:00'),
+  ]);
+  expect(result).not.toBeNull();
+  expect(result.durationMs).toBe(30 * 60 * 1000);
+  expect(result.lat).toBeCloseTo(-19.913, 3);
+});
+
+test('findLongestStop: two pings 29 min apart → null (below threshold)', () => {
+  const result = findLongestStop([
+    stopped(-19.913, -43.941, '2026-04-15T22:00:00'),
+    stopped(-19.913, -43.941, '2026-04-15T22:29:00'),
+  ]);
+  expect(result).toBeNull();
+});
+
+test('findLongestStop: multiple stops, returns the longest', () => {
+  const positions = [
+    stopped(-19.913, -43.941, '2026-04-15T22:00:00'),  // stop A start
+    stopped(-19.913, -43.941, '2026-04-15T22:45:00'),  // stop A end (45 min)
+    moving(-21.0,   -44.0,   '2026-04-15T23:00:00'),  // moving
+    stopped(-23.550, -46.633, '2026-04-16T00:00:00'), // stop B start
+    stopped(-23.550, -46.633, '2026-04-16T02:00:00'), // stop B end (120 min) ← longest
+  ];
+  const result = findLongestStop(positions);
+  expect(result).not.toBeNull();
+  expect(result.durationMs).toBe(120 * 60 * 1000);
+  expect(result.lat).toBeCloseTo(-23.550, 3);
+});
+
+// ─── mostFrequentPoint — unit tests ─────────────────────────────────────────
+
+test('mostFrequentPoint: returns centroid of densest cluster', () => {
+  const positions = [
+    // SP cluster (3 pings)
+    moving(-23.550, -46.633, '2026-04-15T22:00:00'),
+    moving(-23.551, -46.634, '2026-04-15T23:00:00'),
+    moving(-23.550, -46.633, '2026-04-16T00:00:00'),
+    // BH cluster (1 ping)
+    moving(-19.913, -43.941, '2026-04-16T04:00:00'),
+  ];
+  const result = mostFrequentPoint(positions);
+  // SP cluster has 3 pings — must win over BH's 1
+  expect(result.lat).toBeCloseTo(-23.550, 1);
+  expect(result.lng).toBeCloseTo(-46.633, 1);
+});
+
+test('mostFrequentPoint: throws on empty array', () => {
+  expect(() => mostFrequentPoint([])).toThrow('mostFrequentPoint: sorted array must not be empty');
 });
