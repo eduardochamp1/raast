@@ -104,7 +104,21 @@ function mostFrequentPoint(sorted) {
 }
 
 async function analyzeVehicleNight(integrationCode, dateStr, bases, config) {
-  const { windowStart, windowEnd } = buildOvernightWindow(dateStr, config.from, config.to);
+  const targetDate = new Date(`${dateStr}T12:00:00`);
+  const dayOfWeek  = targetDate.getDay();
+  const isWeekend  = (dayOfWeek === 0 || dayOfWeek === 6); // 0 = Domingo, 6 = Sábado
+
+  let windowStart, windowEnd;
+  
+  if (isWeekend) {
+    windowStart = new Date(`${dateStr}T00:00:00`);
+    windowEnd   = new Date(`${dateStr}T23:59:59`);
+  } else {
+    const w = buildOvernightWindow(dateStr, config.from, config.to);
+    windowStart = w.windowStart;
+    windowEnd   = w.windowEnd;
+  }
+
   const positions = await fetchAllPositions(
     integrationCode, toLocalISO(windowStart), toLocalISO(windowEnd)
   );
@@ -117,10 +131,50 @@ async function analyzeVehicleNight(integrationCode, dateStr, bases, config) {
     (a, b) => new Date(a.PositionDate) - new Date(b.PositionDate)
   );
 
-  // Tentar encontrar a parada mais longa (Speed=0 por >= 30 min)
-  const stop = findLongestStop(sorted);
+  if (isWeekend) {
+    let outsidePings = 0;
+    let fallbackLat = null, fallbackLng = null;
+    
+    // Varre todas as posições do FDS. A tolerância é de >= 3 pings fora para evitar GPS spike
+    for (const p of sorted) {
+      if (p.Latitude == null || p.Longitude == null) continue;
+      
+      let insideAny = false;
+      for (const base of bases) {
+        if (haversineKm(p.Latitude, p.Longitude, base.lat, base.lng) * 1000 <= base.raio) {
+          insideAny = true;
+          break;
+        }
+      }
+      
+      if (!insideAny) {
+         if (p.Speed > 0) outsidePings += 2; // se está se movendo, peso maior
+         else outsidePings += 1;
+         
+         if (fallbackLat === null) {
+           fallbackLat = p.Latitude;
+           fallbackLng = p.Longitude;
+         }
+      }
+    }
+    
+    if (outsidePings >= 3) {
+      return { situacao: 'uso_fds', base: null, lat: fallbackLat, lng: fallbackLng };
+    } else {
+      const stop = findLongestStop(sorted);
+      const loc = stop ?? mostFrequentPoint(sorted);
+      for (const base of bases) {
+         if (haversineKm(loc.lat, loc.lng, base.lat, base.lng) * 1000 <= base.raio) {
+            return { situacao: 'base_fds', base: base.nome, lat: loc.lat, lng: loc.lng };
+         }
+      }
+      // Se por algum motivo o ponto mais frequente caiu fora
+      return { situacao: 'uso_fds', base: null, lat: loc.lat, lng: loc.lng };
+    }
+  }
 
-  // Se não houver parada qualificada, usar o ponto mais frequente do trajeto
+  // ── Lógica original para Dias Úteis (Pernoite) ──
+  const stop = findLongestStop(sorted);
   const { lat, lng } = stop ?? mostFrequentPoint(sorted);
 
   for (const base of bases) {

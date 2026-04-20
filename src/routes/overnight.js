@@ -1,111 +1,162 @@
+'use strict';
 const express = require('express');
 const router  = express.Router();
-const { readJSON, writeJSON } = require('../data-store');
+const { randomUUID }  = require('crypto');
+const db               = require('../db');
+const logger           = require('../logger');
+const { validate }     = require('../middleware/validate');
+const { OvernightConfigSchema, OvernightReportQuerySchema } = require('../schemas');
 const { getCachedVehicles }   = require('./vehicles');
 const { analyzeVehicleNight } = require('../overnight');
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function isValidTime(t) {
-  if (!/^\d{2}:\d{2}$/.test(t)) return false;
-  const [h, m] = t.split(':').map(Number);
-  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
-}
-
-// ── Config ──────────────────────────────────────────────────────────────────
+// ── Queries preparadas ────────────────────────────────────────────────────────
+const stmts = {
+  getConfig:      db.prepare('SELECT from_time, to_time FROM overnight_config WHERE id = 1'),
+  setConfig:      db.prepare('INSERT OR REPLACE INTO overnight_config (id, from_time, to_time) VALUES (1, ?, ?)'),
+  alertCount:     db.prepare('SELECT COUNT(*) AS n FROM alerts WHERE visto = 0'),
+  alertsUnread:   db.prepare('SELECT * FROM alerts WHERE visto = 0 ORDER BY data DESC, placa'),
+  alertMarkOne:   db.prepare('UPDATE alerts SET visto = 1 WHERE id = ?'),
+  alertMarkAll:   db.prepare('UPDATE alerts SET visto = 1'),
+  alertDelete90:  db.prepare("DELETE FROM alerts WHERE visto = 1 AND data < date('now', '-90 days')"),
+  alertGet:       db.prepare('SELECT * FROM alerts WHERE id = ?'),
+  alertInsert:    db.prepare(`
+    INSERT OR IGNORE INTO alerts (id, data, placa, grupo, lat, lng, visto)
+    VALUES (?, ?, ?, ?, ?, ?, 0)
+  `),
+  alertExists:    db.prepare('SELECT 1 FROM alerts WHERE placa = ? AND data = ?'),
+  getBases:       db.prepare('SELECT * FROM bases'),
+  getGroups:      db.prepare('SELECT * FROM grupos'),
+  getGroupPlacas: db.prepare('SELECT placa FROM grupo_placas WHERE grupo_id = ?'),
+  getGroupById:   db.prepare('SELECT * FROM grupos WHERE id = ?'),
+  getResult:      db.prepare('SELECT * FROM overnight_results WHERE placa = ? AND data = ?'),
+  insertResult:   db.prepare(`
+    INSERT OR REPLACE INTO overnight_results (placa, data, situacao, base_nome, lat, lng)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  deleteResultCache: db.prepare('DELETE FROM overnight_results WHERE placa = ? AND data = ?'),
+};
+// ── Config ────────────────────────────────────────────────────────────────────
 router.get('/config', (req, res) => {
-  res.json(readJSON('overnight-config.json', { from: '22:00', to: '06:00' }));
+  const cfg = stmts.getConfig.get();
+  res.json({ from: cfg.from_time, to: cfg.to_time });
 });
 
-router.put('/config', (req, res) => {
+router.put('/config', validate(OvernightConfigSchema), (req, res) => {
   const { from, to } = req.body;
-  if (!from || !to || !isValidTime(from) || !isValidTime(to))
-    return res.status(400).json({ error: 'from e to devem estar no formato HH:MM com valores válidos (00:00–23:59)' });
-  writeJSON('overnight-config.json', { from, to });
+  stmts.setConfig.run(from, to);
+  logger.info({ from, to }, '[overnight] Config atualizada');
   res.json({ from, to });
 });
 
-// ── Report ────────────────────────────────────────────────────────────────────
-// Sequential (1 worker) + fixed throttle avoids cascading 429s that occur when
-// multiple concurrent workers all get rate-limited and all retry simultaneously.
-// SSX rate-limit appears to allow ~1 token per 3–4 s (each first attempt gets 429
-// at 1 s throttle; the 2 s retry always succeeds).  4 s gives a safe buffer so the
-// token is always replenished before the next request starts.
+// ── Report (SSE) ──────────────────────────────────────────────────────────────
 const THROTTLE_MS = 4000;
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-const MAX_DAYS = 31; // hard ceiling regardless of group size
+const MAX_DAYS    = 31;
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 function localDateStr(d) {
-  const y   = d.getFullYear();
-  const m   = String(d.getMonth() + 1).padStart(2, '0');
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
-router.get('/report', async (req, res) => {
+router.get('/report', validate(OvernightReportQuerySchema, 'query'), async (req, res) => {
   const { groupId, start, end } = req.query;
-  if (!groupId || !start || !end)
-    return res.status(400).json({ error: 'groupId, start e end são obrigatórios' });
 
-  // ── Validate before opening SSE stream ─────────────────────────────────────
-  const groups = readJSON('groups.json', []);
-  const group  = groups.find(g => g.id === groupId);
+  const group = stmts.getGroupById.get(groupId);
   if (!group) return res.status(404).json({ error: 'Grupo não encontrado' });
 
   const startDate = new Date(`${start}T12:00:00`);
   const endDate   = new Date(`${end}T12:00:00`);
-  if (isNaN(startDate) || isNaN(endDate))
-    return res.status(400).json({ error: 'Datas inválidas. Use o formato YYYY-MM-DD.' });
-
-  const daysDiff = Math.round((endDate - startDate) / 86400000);
-  if (daysDiff < 0 || daysDiff >= MAX_DAYS)
+  const daysDiff  = Math.round((endDate - startDate) / 86400000);
+  if (daysDiff >= MAX_DAYS)
     return res.status(400).json({ error: `Período máximo é ${MAX_DAYS} dias.` });
 
-  // ── Switch to SSE ───────────────────────────────────────────────────────────
+  // Switch para SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const send = (obj) => {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    if (typeof res.flush === 'function') res.flush(); // força saída pelo middleware compression
+  };
 
   try {
-    const bases       = readJSON('bases.json', []);
-    const config      = readJSON('overnight-config.json', { from: '22:00', to: '06:00' });
+    const bases       = stmts.getBases.all();
+    const cfg         = stmts.getConfig.get();
+    const config      = { from: cfg.from_time, to: cfg.to_time };
     const vehicles    = await getCachedVehicles();
-    const plateToCode = Object.fromEntries(vehicles.map(v => [v.plate, v.integrationCode]));
+    const plateToCode = Object.fromEntries(vehicles.map((v) => [v.plate, v.integrationCode]));
+    const placas      = stmts.getGroupPlacas.all(groupId).map((r) => r.placa);
 
-    // Build flat task list: one entry per (vehicle × day)
-    const tasks = [];
+    const allTasks = [];
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = localDateStr(d);
-      for (const plate of group.placas) tasks.push({ plate, dateStr });
+      const dateStr = localDateStr(new Date(d));
+      for (const plate of placas) allTasks.push({ plate, dateStr });
     }
 
-    const total = tasks.length;
-    let done    = 0;
+    const total = allTasks.length;
 
-    // Estimated time: THROTTLE_MS + avg SSX latency (~500 ms) per request
-    const estSec = Math.round(total * (THROTTLE_MS + 500) / 1000);
-    send({ type: 'start', total, estSec });
+    // Separar em cache (disponível instantaneamente) vs para buscar (necessita API SSX)
+    const cachedItems = [];
+    const tasksToFetch = [];
+    
+    for (const task of allTasks) {
+      const cached = stmts.getResult.get(task.plate, task.dateStr);
+      if (cached) {
+        cachedItems.push({
+          placa: cached.placa, data: cached.data, situacao: cached.situacao,
+          base: cached.base_nome, lat: cached.lat, lng: cached.lng, cached: true
+        });
+      } else {
+        tasksToFetch.push(task);
+      }
+    }
 
-    // ── Sequential loop — avoids cascading 429 retries from concurrent workers ──
+    let currentDelay = 2000; // Backoff adaptativo inicial (2s)
+    let done = 0;
+    
+    // Calcula estimativa mais precisa
+    const estSec = Math.round((tasksToFetch.length * (currentDelay + 500)) / 1000);
+    send({ type: 'start', total, cached: cachedItems.length, toFetch: tasksToFetch.length, estSec });
+
+    // 1. Enviar resultados cacheados imediatamente
+    for (const row of cachedItems) {
+      done++;
+      send({ type: 'result', done, total, row });
+    }
+
+    // 2. Fila serial com backoff adaptativo para itens sem cache
     let first = true;
-    for (const { plate, dateStr } of tasks) {
-      if (!first) await sleep(THROTTLE_MS);
+    for (const { plate, dateStr } of tasksToFetch) {
+      if (!first) await sleep(currentDelay);
       first = false;
 
       const integrationCode = plateToCode[plate];
       let row;
+      
       if (!integrationCode) {
         row = { placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null };
       } else {
         try {
           const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
           row = { placa: plate, data: dateStr, ...analysis };
+          
+          // Sucesso → Salva no cache & acelera ligeiramente a fila
+          stmts.insertResult.run(
+            plate, dateStr, row.situacao,
+            row.base || null, row.lat || null, row.lng || null
+          );
+          currentDelay = Math.max(currentDelay * 0.85, 1000); // min 1s
+          
         } catch (err) {
-          console.error(`[overnight report] ${plate} ${dateStr}:`, err.message);
+          logger.error({ err, plate, dateStr }, '[overnight report] Erro ao analisar veículo');
           row = { placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null };
+          
+          // Falha → Backoff pesado
+          currentDelay = Math.min(currentDelay * 2, 15000); // max 15s
         }
       }
       done++;
@@ -114,38 +165,50 @@ router.get('/report', async (req, res) => {
 
     send({ type: 'done', total });
   } catch (err) {
-    console.error('[overnight report] unexpected error:', err.message);
+    logger.error({ err }, '[overnight report] Erro inesperado');
     send({ type: 'error', message: 'Erro interno ao gerar relatório' });
   }
 
   res.end();
 });
 
-// ── Alerts — fixed routes BEFORE /:id/visto ───────────────────────────────────
+// Cache endpoint para invalidar iten(s) caso seja necessário re-processar
+router.delete('/results/cache', (req, res) => {
+  const { placa, data } = req.query;
+  if (!placa || !data) return res.status(400).json({ error: 'Parâmetros placa e data são obrigatórios' });
+  const result = stmts.deleteResultCache.run(placa, data);
+  res.json({ deleted: result.changes > 0 });
+});
+
+// ── Alerts — rotas fixas ANTES de /:id/visto ──────────────────────────────────
 router.get('/alerts/count', (req, res) => {
-  const alerts = readJSON('alerts.json', []);
-  res.json({ count: alerts.filter(a => !a.visto).length });
+  const { n } = stmts.alertCount.get();
+  res.json({ count: n });
 });
 
 router.patch('/alerts/visto-todos', (req, res) => {
-  const alerts  = readJSON('alerts.json', []);
-  const updated = alerts.map(a => ({ ...a, visto: true }));
-  writeJSON('alerts.json', updated);
+  stmts.alertMarkAll.run();
+  logger.info('[overnight] Todos alertas marcados como vistos');
   res.json({ ok: true });
 });
 
+// DELETE alertas vistos há mais de 90 dias
+router.delete('/alerts/antigas', (req, res) => {
+  const result = stmts.alertDelete90.run();
+  logger.info({ changes: result.changes }, '[overnight] Alertas antigos removidos');
+  res.json({ deleted: result.changes });
+});
+
 router.get('/alerts', (req, res) => {
-  const alerts = readJSON('alerts.json', []);
-  res.json(alerts.filter(a => !a.visto));
+  res.json(stmts.alertsUnread.all());
 });
 
 router.patch('/alerts/:id/visto', (req, res) => {
-  const alerts = readJSON('alerts.json', []);
-  const idx    = alerts.findIndex(a => a.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Alerta não encontrado' });
-  alerts[idx].visto = true;
-  writeJSON('alerts.json', alerts);
-  res.json(alerts[idx]);
+  const alert = stmts.alertGet.get(req.params.id);
+  if (!alert) return res.status(404).json({ error: 'Alerta não encontrado' });
+  stmts.alertMarkOne.run(req.params.id);
+  res.json({ ...alert, visto: 1 });
 });
 
 module.exports = router;
+module.exports._stmts = stmts; // exportado para uso no cron

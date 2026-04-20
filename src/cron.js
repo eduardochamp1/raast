@@ -1,79 +1,126 @@
-const cron = require('node-cron');
+'use strict';
+const cron   = require('node-cron');
 const { randomUUID } = require('crypto');
-const { readJSON, writeJSON, ensureFile } = require('./data-store');
+const db     = require('./db');
+const logger = require('./logger');
 const { getCachedVehicles }   = require('./routes/vehicles');
 const { analyzeVehicleNight } = require('./overnight');
 
-function initCron() {
-  // Ensure data files exist on startup
-  ensureFile('bases.json',            []);
-  ensureFile('groups.json',           []);
-  ensureFile('overnight-config.json', { from: '22:00', to: '06:00' });
-  ensureFile('alerts.json',           []);
+// ── Queries preparadas ────────────────────────────────────────────────────────
+const stmts = {
+  getBases:       db.prepare('SELECT * FROM bases'),
+  getGroups:      db.prepare('SELECT * FROM grupos'),
+  getGroupPlacas: db.prepare('SELECT placa FROM grupo_placas WHERE grupo_id = ?'),
+  getConfig:      db.prepare('SELECT from_time, to_time FROM overnight_config WHERE id = 1'),
+  alertExists:    db.prepare('SELECT 1 FROM alerts WHERE placa = ? AND data = ?'),
+  alertInsert:    db.prepare(`
+    INSERT OR IGNORE INTO alerts (id, data, placa, grupo, lat, lng, visto)
+    VALUES (?, ?, ?, ?, ?, ?, 0)
+  `),
+  cleanOld:       db.prepare("DELETE FROM alerts WHERE visto = 1 AND data < date('now', '-90 days')"),
+  getResult:      db.prepare('SELECT * FROM overnight_results WHERE placa = ? AND data = ?'),
+  insertResult:   db.prepare(`
+    INSERT OR REPLACE INTO overnight_results (placa, data, situacao, base_nome, lat, lng)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+};
 
-  // Every day at 07:00 local time
+function initCron() {
+  // ── Análise de pernoite — todos os dias às 07:00 ──────────────────────────
   cron.schedule('0 7 * * *', async () => {
-    console.log('[cron] Iniciando análise de pernoite...');
+    logger.info('[cron] Iniciando análise de pernoite...');
     try {
-      const bases   = readJSON('bases.json', []);
-      const groups  = readJSON('groups.json', []);
-      const config  = readJSON('overnight-config.json', { from: '22:00', to: '06:00' });
-      const alerts  = readJSON('alerts.json', []);  // used for dedup check only
-      const newAlerts = [];  // new ones to add
+      const bases  = stmts.getBases.all();
+      const groups = stmts.getGroups.all();
+      const cfg    = stmts.getConfig.get();
+      const config = { from: cfg.from_time, to: cfg.to_time };
 
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      // Uses local wall-clock time intentionally — matches overnight.js convention.
-      // Server must run in the same timezone as the fleet.
-      const dateStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth()+1).padStart(2,'0')}-${String(yesterday.getDate()).padStart(2,'0')}`;
+      const y = yesterday.getFullYear();
+      const m = String(yesterday.getMonth() + 1).padStart(2, '0');
+      const d = String(yesterday.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
 
       const vehicles    = await getCachedVehicles();
-      const plateToCode = Object.fromEntries(vehicles.map(v => [v.plate, v.integrationCode]));
+      const plateToCode = Object.fromEntries(vehicles.map((v) => [v.plate, v.integrationCode]));
+
+      let inserted = 0;
+      let currentDelay = 2000;
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
       for (const group of groups) {
-        for (const plate of (group.placas || [])) {
+        const placas = stmts.getGroupPlacas.all(group.id).map((r) => r.placa);
+        for (const plate of placas) {
           const integrationCode = plateToCode[plate];
           if (!integrationCode) continue;
-          // Skip if alert for this plate+date already exists
-          if (alerts.some(a => a.placa === plate && a.data === dateStr)) continue;
 
-          try {
-            const result = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
-            if (result.situacao === 'fora') {
-              newAlerts.push({
-                id:    randomUUID(),
-                data:  dateStr,
-                placa: plate,
-                grupo: group.nome,
-                lat:   result.lat,
-                lng:   result.lng,
-                visto: false,
-              });
+          let situacao;
+          let lat = null;
+          let lng = null;
+
+          // Verifica cache
+          const cached = stmts.getResult.get(plate, dateStr);
+          if (cached) {
+            situacao = cached.situacao;
+            lat = cached.lat;
+            lng = cached.lng;
+          } else {
+            // Se não está no cache, processa com backoff
+            await sleep(currentDelay);
+            try {
+              const result = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
+              situacao = result.situacao;
+              lat = result.lat;
+              lng = result.lng;
+
+              // Salva no cache
+              stmts.insertResult.run(
+                plate, dateStr, situacao,
+                result.base || null, lat || null, lng || null
+              );
+              // Sucesso → acelera
+              currentDelay = Math.max(currentDelay * 0.85, 1000); // acelera (min 1s)
+            } catch (err) {
+              logger.error({ err, plate }, '[cron] Erro ao analisar veículo');
+              // Erro → backoff pesado
+              currentDelay = Math.min(currentDelay * 2, 15000); // máximo 15s
+              continue; // pula este veículo, sem cache nem alerta
             }
-          } catch (err) {
-            console.error(`[cron] Erro ao analisar ${plate}:`, err.message);
+          }
+
+          if (situacao === 'fora' || situacao === 'uso_fds') {
+             // Só insere se não existir o alerta ainda
+            if (!stmts.alertExists.get(plate, dateStr)) { 
+              stmts.alertInsert.run(
+                randomUUID(), dateStr, plate, group.nome,
+                lat ?? null, lng ?? null
+              );
+              inserted++;
+            }
           }
         }
       }
 
-      // Re-read alerts before writing to avoid overwriting changes made during the await loop
-      if (newAlerts.length > 0) {
-        const currentAlerts = readJSON('alerts.json', []);
-        // Only add alerts not already present (dedup by placa+data)
-        for (const alert of newAlerts) {
-          if (!currentAlerts.some(a => a.placa === alert.placa && a.data === alert.data)) {
-            currentAlerts.push(alert);
-          }
-        }
-        writeJSON('alerts.json', currentAlerts);
-      }
-      console.log('[cron] Análise concluída');
+      logger.info({ dateStr, inserted }, '[cron] Análise de pernoite concluída');
     } catch (err) {
-      console.error('[cron] Erro geral:', err.stack || err.message);
+      logger.error({ err }, '[cron] Erro geral na análise de pernoite');
     }
   });
 
-  console.log('[cron] Job de pernoite agendado para 07:00 diário');
+  // ── Limpeza de alertas antigos — todos os dias às 03:00 ──────────────────
+  cron.schedule('0 3 * * *', () => {
+    try {
+      const result = stmts.cleanOld.run();
+      if (result.changes > 0) {
+        logger.info({ deleted: result.changes }, '[cron] Alertas antigos removidos (>90 dias)');
+      }
+    } catch (err) {
+      logger.error({ err }, '[cron] Erro na limpeza de alertas');
+    }
+  });
+
+  logger.info('[cron] Jobs agendados: pernoite às 07:00, limpeza às 03:00');
 }
 
 module.exports = { initCron };

@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RAAST – Configurações</title>
+  <meta name="description" content="RAAST — Configurações de bases, grupos de veículos e horário de pernoite.">
+  <title>RAAST — Configurações</title>
+
+  <!-- Favicon SVG -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text y='22' x='5' font-size='20'>⚙️</text></svg>">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
@@ -15,8 +20,8 @@
     <div class="sidebar-header">
       <div class="sidebar-logo">⚙️</div>
       <div>
-        <div class="sidebar-title">Configurações</div>
-        <div class="sidebar-sub">Bases · Grupos · Horário</div>
+        <div class="sidebar-title">RAAST</div>
+        <div class="sidebar-sub">Configurações</div>
       </div>
     </div>
 
@@ -32,8 +37,9 @@
       <!-- Tab: Bases -->
       <div id="tab-bases" class="tab-content active">
         <button class="btn-primary" id="btnAddBase" style="margin-top:0;margin-bottom:10px">+ Nova Base</button>
-        <p id="addModeHint" style="display:none;font-size:11px;color:#f59e0b;margin-bottom:8px">
-          Clique no mapa para posicionar a nova base. <button id="btnCancelAdd" style="color:#fca5a5;background:none;border:none;cursor:pointer;font-size:11px">Cancelar</button>
+        <p id="addModeHint" style="display:none;font-size:11px;color:var(--amber);margin-bottom:8px">
+          Clique no mapa para posicionar a nova base.
+          <button id="btnCancelAdd" style="color:#fca5a5;background:none;border:none;cursor:pointer;font-size:11px;font-weight:600">Cancelar</button>
         </p>
         <div id="bases-list"></div>
       </div>
@@ -64,12 +70,12 @@
           ⚠️ Janela cruza meia-noite — isso é normal para horários como 22h → 06h.
         </div>
         <button class="btn-primary" id="btnSaveTime" style="margin-top:8px">Salvar Horário</button>
-        <span id="timeSaveMsg" style="font-size:12px;color:#22c55e;margin-left:8px"></span>
+        <span id="timeSaveMsg" style="font-size:12px;color:var(--green);margin-left:8px"></span>
       </div>
     </div>
   </aside>
 
-  <!-- MAP (always visible; bases displayed here) -->
+  <!-- MAP -->
   <main class="map-container">
     <div id="settings-map" style="width:100%;height:100%"></div>
   </main>

@@ -1,5 +1,7 @@
 jest.mock('axios');
 jest.mock('../src/ssx-auth');
+jest.mock('../src/config');
+jest.mock('../src/logger');
 
 const axios = require('axios');
 const { getToken, clearToken } = require('../src/ssx-auth');

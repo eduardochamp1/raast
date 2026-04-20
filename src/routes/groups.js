@@ -1,48 +1,79 @@
+'use strict';
 const express = require('express');
 const router  = express.Router();
 const { randomUUID } = require('crypto');
-const { readJSON, writeJSON } = require('../data-store');
+const db      = require('../db');
+const logger  = require('../logger');
+const { validate } = require('../middleware/validate');
+const { GroupBodySchema, GroupBodyPatchSchema } = require('../schemas');
 
+// ── Queries preparadas ────────────────────────────────────────────────────────
+const stmts = {
+  list:        db.prepare('SELECT * FROM grupos ORDER BY nome'),
+  get:         db.prepare('SELECT * FROM grupos WHERE id = ?'),
+  placas:      db.prepare('SELECT placa FROM grupo_placas WHERE grupo_id = ? ORDER BY placa'),
+  insertGrp:   db.prepare('INSERT INTO grupos (id, nome) VALUES (?, ?)'),
+  updateGrp:   db.prepare('UPDATE grupos SET nome = ? WHERE id = ?'),
+  deleteGrp:   db.prepare('DELETE FROM grupos WHERE id = ?'),
+  deletePlacas:db.prepare('DELETE FROM grupo_placas WHERE grupo_id = ?'),
+  insertPlaca: db.prepare('INSERT OR IGNORE INTO grupo_placas (grupo_id, placa) VALUES (?, ?)'),
+};
+
+/** Monta objeto de grupo com array de placas incluído */
+function hydrateGroup(row) {
+  if (!row) return null;
+  const placas = stmts.placas.all(row.id).map((r) => r.placa);
+  return { ...row, placas };
+}
+
+// GET /api/groups
 router.get('/', (req, res) => {
-  res.json(readJSON('groups.json', []));
+  const groups = stmts.list.all().map(hydrateGroup);
+  res.json(groups);
 });
 
-router.post('/', (req, res) => {
+// POST /api/groups
+router.post('/', validate(GroupBodySchema), (req, res) => {
   const { nome, placas } = req.body;
-  const nomeTrimmed = typeof nome === 'string' ? nome.trim() : '';
-  if (!nomeTrimmed || !Array.isArray(placas) || placas.length === 0)
-    return res.status(400).json({ error: 'nome e placas (array não vazio) são obrigatórios' });
-  const groups   = readJSON('groups.json', []);
-  const newGroup = { id: randomUUID(), nome: nomeTrimmed, placas };
-  groups.push(newGroup);
-  writeJSON('groups.json', groups);
-  res.status(201).json(newGroup);
+  const id = randomUUID();
+
+  db.transaction(() => {
+    stmts.insertGrp.run(id, nome);
+    for (const p of placas) stmts.insertPlaca.run(id, p.trim());
+  })();
+
+  logger.info({ id, nome, count: placas.length }, '[groups] Grupo criado');
+  res.status(201).json(hydrateGroup(stmts.get.get(id)));
 });
 
-router.put('/:id', (req, res) => {
-  const groups = readJSON('groups.json', []);
-  const idx    = groups.findIndex(g => g.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Grupo não encontrado' });
-  const { nome, placas } = req.body;
-  // Validate nome if provided
-  if (nome != null) {
-    if (typeof nome !== 'string' || nome.trim() === '')
-      return res.status(400).json({ error: 'nome deve ser uma string não vazia' });
-  }
-  const newNome   = nome   != null ? nome.trim()  : groups[idx].nome;
-  const newPlacas = placas != null ? placas        : groups[idx].placas;
-  groups[idx] = { ...groups[idx], nome: newNome, placas: newPlacas };
-  writeJSON('groups.json', groups);
-  res.json(groups[idx]);
+// PUT /api/groups/:id
+router.put('/:id', validate(GroupBodyPatchSchema), (req, res) => {
+  const existing = stmts.get.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+  const nome   = req.body.nome   ?? existing.nome;
+  const placas = req.body.placas ?? stmts.placas.all(req.params.id).map((r) => r.placa);
+
+  db.transaction(() => {
+    stmts.updateGrp.run(nome, req.params.id);
+    if (req.body.placas !== undefined) {
+      stmts.deletePlacas.run(req.params.id);
+      for (const p of placas) stmts.insertPlaca.run(req.params.id, p.trim());
+    }
+  })();
+
+  logger.info({ id: req.params.id }, '[groups] Grupo atualizado');
+  res.json(hydrateGroup(stmts.get.get(req.params.id)));
 });
 
+// DELETE /api/groups/:id
 router.delete('/:id', (req, res) => {
-  const groups    = readJSON('groups.json', []);
-  const newGroups = groups.filter(g => g.id !== req.params.id);
-  if (newGroups.length === groups.length)
-    return res.status(404).json({ error: 'Grupo não encontrado' });
-  writeJSON('groups.json', newGroups);
+  // ON DELETE CASCADE cuida de grupo_placas automaticamente
+  const result = stmts.deleteGrp.run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Grupo não encontrado' });
+  logger.info({ id: req.params.id }, '[groups] Grupo removido');
   res.status(204).send();
 });
 
 module.exports = router;
+module.exports.hydrateGroup = hydrateGroup; // exportado para uso interno (cron)

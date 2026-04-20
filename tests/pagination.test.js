@@ -1,4 +1,6 @@
 jest.mock('../src/ssx-client');
+jest.mock('../src/config');
+jest.mock('../src/logger');
 const { getPositionHistory } = require('../src/ssx-client');
 
 beforeEach(() => jest.clearAllMocks());

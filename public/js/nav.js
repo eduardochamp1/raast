@@ -42,8 +42,14 @@ async function _loadAlertCount() {
     const { count } = await res.json();
     const badge = document.getElementById('alertBadge');
     if (!badge) return;
-    if (count > 0) { badge.textContent = count; badge.style.display = 'inline-flex'; }
-    else           { badge.style.display = 'none'; }
+    if (count > 0) {
+      badge.textContent = count;
+      badge.style.display = 'inline-flex';
+      badge.classList.add('pulse');
+    } else {
+      badge.style.display = 'none';
+      badge.classList.remove('pulse');
+    }
   } catch { /* silent */ }
 }
 

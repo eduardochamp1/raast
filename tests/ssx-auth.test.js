@@ -1,4 +1,6 @@
 jest.mock('axios');
+jest.mock('../src/config');
+jest.mock('../src/logger');
 const axios = require('axios');
 
 // Limpar módulo entre testes para resetar estado do token

@@ -223,10 +223,19 @@ function renderTable(data) {
   tbody.innerHTML = data.map(row => {
     let badge, local;
     if (row.situacao === 'base') {
-      badge = `<span class="badge-base">✅ Base</span>`;
+      badge = `<span class="badge-base" title="Quarta, Quinta, etc.">✅ Base (Pernoite)</span>`;
       local = _esc(row.base || '—');
     } else if (row.situacao === 'fora') {
-      badge = `<span class="badge-fora">❌ Fora</span>`;
+      badge = `<span class="badge-fora">❌ Fora (Pernoite)</span>`;
+      local = row.lat != null
+        ? `<a href="https://www.google.com/maps?q=${row.lat},${row.lng}" target="_blank"
+              style="color:#3b82f6;font-size:10px">${row.lat.toFixed(4)}, ${row.lng.toFixed(4)}</a>`
+        : '—';
+    } else if (row.situacao === 'base_fds') {
+      badge = `<span class="badge-base" style="background:var(--bg-card);border:1px solid #10b981;color:#10b981">🛌 Base (FDS)</span>`;
+      local = _esc(row.base || '—');
+    } else if (row.situacao === 'uso_fds') {
+      badge = `<span class="badge-fora" style="animation:pulse-red 2s infinite">🚨 USO EM FDS</span>`;
       local = row.lat != null
         ? `<a href="https://www.google.com/maps?q=${row.lat},${row.lng}" target="_blank"
               style="color:#3b82f6;font-size:10px">${row.lat.toFixed(4)}, ${row.lng.toFixed(4)}</a>`
@@ -235,7 +244,7 @@ function renderTable(data) {
       badge = `<span class="badge-sem-dados">— ${row.situacao === 'erro' ? 'Erro' : 'Sem dados'}</span>`;
       local = '—';
     }
-    return `<tr><td>${_esc(row.placa)}</td><td>${_esc(row.data)}</td><td>${badge}</td><td>${local}</td></tr>`;
+    return `<tr><td>${_esc(row.placa)}</td><td><strong>${_esc(row.data)}</strong></td><td>${badge}</td><td>${local}</td></tr>`;
   }).join('');
 
   table.style.display = 'table';
@@ -250,17 +259,21 @@ function renderMarkers(data) {
 
   data.forEach(row => {
     if (row.lat == null || row.lng == null) return;
-    const isBase = row.situacao === 'base';
+    const isBase = row.situacao === 'base' || row.situacao === 'base_fds';
+    const isUsoFds = row.situacao === 'uso_fds';
     const color  = isBase ? '#22c55e' : '#ef4444';
+    
+    let info = '';
+    if (isBase) info = `✅ Base: <span>${_esc(row.base)}</span>`;
+    else if (isUsoFds) info = `🚨 <strong>Uso indevido no Fim de Semana</strong>`;
+    else info = `❌ Fora da base (Pernoite)`;
+
     const marker = L.circleMarker([row.lat, row.lng], {
       radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2
     }).bindPopup(`
       <div class="popup-plate">${_esc(row.placa)}</div>
       <div class="popup-row">📅 Data: <span>${_esc(row.data)}</span></div>
-      <div class="popup-row">${isBase
-        ? `✅ Base: <span>${_esc(row.base)}</span>`
-        : `❌ Fora da base`}
-      </div>
+      <div class="popup-row">${info}</div>
       ${!isBase ? `<div class="popup-row">
         <a href="https://www.google.com/maps?q=${row.lat},${row.lng}" target="_blank" style="color:#3b82f6">
           Ver no Google Maps

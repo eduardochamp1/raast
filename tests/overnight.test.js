@@ -1,4 +1,6 @@
 jest.mock('../src/pagination');
+jest.mock('../src/config');
+jest.mock('../src/logger');
 const { fetchAllPositions } = require('../src/pagination');
 const { analyzeVehicleNight, haversineKm, buildOvernightWindow, findLongestStop, mostFrequentPoint } = require('../src/overnight');
 

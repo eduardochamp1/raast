@@ -1,47 +1,56 @@
+'use strict';
 const express = require('express');
 const router  = express.Router();
 const { randomUUID } = require('crypto');
-const { readJSON, writeJSON } = require('../data-store');
+const db      = require('../db');
+const logger  = require('../logger');
+const { validate } = require('../middleware/validate');
+const { BaseBodySchema, BaseBodyPatchSchema } = require('../schemas');
 
+// ── Queries preparadas (compiladas uma única vez) ─────────────────────────────
+const stmts = {
+  list:   db.prepare('SELECT * FROM bases ORDER BY nome'),
+  get:    db.prepare('SELECT * FROM bases WHERE id = ?'),
+  insert: db.prepare('INSERT INTO bases (id, nome, lat, lng, raio) VALUES (?, ?, ?, ?, ?)'),
+  update: db.prepare('UPDATE bases SET nome = ?, lat = ?, lng = ?, raio = ? WHERE id = ?'),
+  delete: db.prepare('DELETE FROM bases WHERE id = ?'),
+};
+
+// GET /api/bases
 router.get('/', (req, res) => {
-  res.json(readJSON('bases.json', []));
+  res.json(stmts.list.all());
 });
 
-router.post('/', (req, res) => {
+// POST /api/bases
+router.post('/', validate(BaseBodySchema), (req, res) => {
   const { nome, lat, lng, raio } = req.body;
-  const nomeTrimmed = typeof nome === 'string' ? nome.trim() : '';
-  if (!nomeTrimmed || lat == null || lng == null || raio == null || Number(raio) <= 0
-      || Number(lat) < -90 || Number(lat) > 90 || Number(lng) < -180 || Number(lng) > 180)
-    return res.status(400).json({ error: 'Dados inválidos: nome obrigatório, lat [-90,90], lng [-180,180], raio > 0' });
-  const bases = readJSON('bases.json', []);
-  const newBase = { id: randomUUID(), nome: nomeTrimmed, lat: Number(lat), lng: Number(lng), raio: Number(raio) };
-  bases.push(newBase);
-  writeJSON('bases.json', bases);
-  res.status(201).json(newBase);
+  const id = randomUUID();
+  stmts.insert.run(id, nome, lat, lng, raio);
+  const base = stmts.get.get(id);
+  logger.info({ id, nome }, '[bases] Base criada');
+  res.status(201).json(base);
 });
 
-router.put('/:id', (req, res) => {
-  const bases = readJSON('bases.json', []);
-  const idx = bases.findIndex(b => b.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Base não encontrada' });
-  const { nome, lat, lng, raio } = req.body;
-  const newRaio = raio != null ? Number(raio) : bases[idx].raio;
-  const newLat  = lat  != null ? Number(lat)  : bases[idx].lat;
-  const newLng  = lng  != null ? Number(lng)  : bases[idx].lng;
-  const newNome = nome != null ? (typeof nome === 'string' ? nome.trim() : '') : bases[idx].nome;
-  if (!newNome || newRaio <= 0 || newLat < -90 || newLat > 90 || newLng < -180 || newLng > 180)
-    return res.status(400).json({ error: 'Dados inválidos: nome obrigatório, lat [-90,90], lng [-180,180], raio > 0' });
-  bases[idx] = { ...bases[idx], nome: newNome, lat: newLat, lng: newLng, raio: newRaio };
-  writeJSON('bases.json', bases);
-  res.json(bases[idx]);
+// PUT /api/bases/:id
+router.put('/:id', validate(BaseBodyPatchSchema), (req, res) => {
+  const existing = stmts.get.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Base não encontrada' });
+
+  const nome = req.body.nome ?? existing.nome;
+  const lat  = req.body.lat  ?? existing.lat;
+  const lng  = req.body.lng  ?? existing.lng;
+  const raio = req.body.raio ?? existing.raio;
+
+  stmts.update.run(nome, lat, lng, raio, req.params.id);
+  logger.info({ id: req.params.id }, '[bases] Base atualizada');
+  res.json(stmts.get.get(req.params.id));
 });
 
+// DELETE /api/bases/:id
 router.delete('/:id', (req, res) => {
-  const bases    = readJSON('bases.json', []);
-  const newBases = bases.filter(b => b.id !== req.params.id);
-  if (newBases.length === bases.length)
-    return res.status(404).json({ error: 'Base não encontrada' });
-  writeJSON('bases.json', newBases);
+  const result = stmts.delete.run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Base não encontrada' });
+  logger.info({ id: req.params.id }, '[bases] Base removida');
   res.status(204).send();
 });
 
