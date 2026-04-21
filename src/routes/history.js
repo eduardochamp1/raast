@@ -4,7 +4,7 @@ const router  = express.Router();
 const logger  = require('../logger');
 const { validate } = require('../middleware/validate');
 const { HistoryQuerySchema } = require('../schemas');
-const { fetchAllPositions }  = require('../pagination');
+const { fetchAllPositions, fetchLastKnownPosition }  = require('../pagination');
 const { getCachedVehicles }  = require('./vehicles');
 
 // GET /api/history?plates=ABC-1234,DEF-5678&start=2026-01-01&end=2026-01-31&timeFrom=00:00&timeTo=23:59
@@ -37,19 +37,55 @@ router.get('/', validate(HistoryQuerySchema, 'query'), async (req, res) => {
         .filter((p) => {
           if (p.Latitude == null || p.Longitude == null) return false;
           if (!needsTimeFilter) return true;
-          const timePart = p.PositionDate ? p.PositionDate.slice(11, 16) : '00:00';
-          const [h, m] = timePart.split(':').map(Number);
-          const mins = h * 60 + m;
+
+          // EventDate pode vir em UTC (terminado em Z), precisamos converter
+          // para objeto Date local antes de checar as horas locais (do servidor/cliente BR).
+          let d;
+          if (p.EventDate) {
+            d = new Date(p.EventDate.includes('Z') ? p.EventDate : p.EventDate + 'Z');
+          } else {
+            d = new Date();
+          }
+
+          const mins = d.getHours() * 60 + d.getMinutes();
           return mins >= fromMinutes && mins <= toMinutes;
         })
         .map((p) => ({
           lat:    p.Latitude,
           lng:    p.Longitude,
-          date:   p.PositionDate,
+          date:   p.EventDate,
           speed:  p.Speed ?? 0,
           course: p.Course ?? 0,
+          ignition: !!p.Ignition,
         }))
         .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      // ── FALLBACK ──
+      // Se não sobrou nenhuma posição no período e filtro, busca a última conhecida para ele não sumir
+      if (positions.length === 0) {
+        const lastPos = await fetchLastKnownPosition(vehicle.integrationCode, startISO);
+        if (lastPos && lastPos.Latitude != null && lastPos.Longitude != null) {
+          positions.push({
+            lat:    lastPos.Latitude,
+            lng:    lastPos.Longitude,
+            date:   lastPos.EventDate,
+            speed:  lastPos.Speed ?? 0,
+            course: lastPos.Course ?? 0,
+            ignition: !!lastPos.Ignition, // Pega status do ponto isolado
+          });
+        } else if (vehicle.lat != null && vehicle.lng != null) {
+          // SECONDARY FALLBACK: Se o rastreador não envia pings há mais de 72h,
+          // resgata a coordenada extrema gravada em cache no Live Tracking
+          positions.push({
+            lat: vehicle.lat,
+            lng: vehicle.lng,
+            date: vehicle.lastSeen || startISO,
+            speed: 0,
+            course: 0,
+            ignition: vehicle.status === 'moving',
+          });
+        }
+      }
 
       return { plate, positions };
     });

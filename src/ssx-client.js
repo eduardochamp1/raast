@@ -5,22 +5,31 @@ const logger = require('./logger');
 const { getToken, clearToken } = require('./ssx-auth');
 
 // ── Rate-limit global e retry ─────────────────────────────────────────────────
-const MAX_RETRIES   = 4;
-const RETRY_BASE_MS = 3000; // 3 s → 6 s → 12 s → 24 s
-
-let globalNextAllowed = 0;
+const MAX_RETRIES        = 4;
+const RETRY_BASE_MS      = 3000; // 3 s → 6 s → 12 s → 24 s
 const GLOBAL_THROTTLE_MS = 1500; // Espaçamento mínimo entre ANY request para a SSX
 const GLOBAL_COOLDOWN_MS = 10000; // Pausa forçada de todos requests ao bater em 429
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+// Fila serial de throttle — garante que requests são disparadas 1 por vez,
+// mesmo com múltiplos callers assíncronos concorrentes.
+// Cada chamada encadeia no final da fila e espera o delay antes de prosseguir.
+// Isso elimina a race condition do padrão "read-then-write" com timestamp.
+let throttleChain  = Promise.resolve();
+let cooldownUntil  = 0;
+
 async function waitGlobalThrottle() {
-  const now = Date.now();
-  if (globalNextAllowed > now) {
-    await sleep(globalNextAllowed - now);
-  }
-  globalNextAllowed = Date.now() + GLOBAL_THROTTLE_MS;
+  const prev = throttleChain;
+  // Encadeia na fila: esta req só dispara após a anterior + seu delay
+  throttleChain = prev.then(async () => {
+    const extra = cooldownUntil - Date.now();
+    if (extra > 0) await sleep(extra);  // aguarda cooldown de 429 se ativo
+    await sleep(GLOBAL_THROTTLE_MS);    // espaçamento mínimo entre requests
+  });
+  await throttleChain;
 }
+
 
 async function ssx(path, body) {
   const token = await getToken();
@@ -42,7 +51,7 @@ async function ssx(path, body) {
         );
         if (err.response.status === 429) {
           logger.warn('[ssx-client] Aplicando cooldown global de 10s');
-          globalNextAllowed = Date.now() + GLOBAL_COOLDOWN_MS;
+          cooldownUntil = Date.now() + GLOBAL_COOLDOWN_MS;
         }
       }
       throw err instanceof Error ? err : Object.assign(new Error('SSX request failed'), err);

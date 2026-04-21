@@ -7,7 +7,7 @@ beforeEach(() => jest.clearAllMocks());
 
 test('busca janela única quando período cabe em 6h', async () => {
   getPositionHistory.mockResolvedValue([
-    { Plate: 'ABC-1234', Latitude: -23.5, Longitude: -46.6, PositionDate: '2026-01-01T03:00:00', Speed: 80 }
+    { Plate: 'ABC-1234', Latitude: -23.5, Longitude: -46.6, EventDate: '2026-01-01T03:00:00', Speed: 80 }
   ]);
 
   const { fetchAllPositions } = require('../src/pagination');
@@ -28,8 +28,8 @@ test('busca 4 janelas para período de 24h', async () => {
 
 test('agrega resultados de múltiplas janelas', async () => {
   getPositionHistory
-    .mockResolvedValueOnce([{ Plate: 'ABC', PositionDate: '2026-01-01T01:00:00' }])
-    .mockResolvedValueOnce([{ Plate: 'ABC', PositionDate: '2026-01-01T07:00:00' }]);
+    .mockResolvedValueOnce([{ Plate: 'ABC', EventDate: '2026-01-01T01:00:00' }])
+    .mockResolvedValueOnce([{ Plate: 'ABC', EventDate: '2026-01-01T07:00:00' }]);
 
   const { fetchAllPositions } = require('../src/pagination');
   const result = await fetchAllPositions('COD-001', '2026-01-01T00:00:00', '2026-01-01T12:00:00');
@@ -45,7 +45,7 @@ test('passa QueryConditions corretas com datas da janela', async () => {
 
   expect(getPositionHistory).toHaveBeenCalledWith([
     { PropertyName: 'TrackedUnitIntegrationCode', Condition: 'Equal', Value: 'COD-001' },
-    { PropertyName: 'PositionDate', Condition: 'GreaterThanOrEqualTo', Value: '2026-01-01T00:00:00' },
-    { PropertyName: 'PositionDate', Condition: 'LessThan', Value: '2026-01-01T06:00:00' }
+    { PropertyName: 'EventDate', Condition: 'GreaterThanOrEqualTo', Value: '2026-01-01T00:00:00' },
+    { PropertyName: 'EventDate', Condition: 'LessThan', Value: '2026-01-01T06:00:00' }
   ]);
 });

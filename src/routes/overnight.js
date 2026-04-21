@@ -49,15 +49,36 @@ router.put('/config', validate(OvernightConfigSchema), (req, res) => {
 });
 
 // ── Report (SSE) ──────────────────────────────────────────────────────────────
-const THROTTLE_MS = 4000;
-const MAX_DAYS    = 31;
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+const MAX_DAYS        = 31;
+const REPORT_CONCURRENCY = 2; // Veículos processados simultaneamente
 
 function localDateStr(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Executa um array de tarefas assíncronas com concorrência limitada.
+ * Cada tarefa é chamada com `fn(item)` e os resultados chegam na ordem de conclusão.
+ * Chama `onResult(result)` assim que cada tarefa termina (streaming real-time).
+ *
+ * @param {Array}    items       - Lista de itens a processar
+ * @param {number}   concurrency - Máximo de tarefas simultâneas
+ * @param {Function} fn          - Async function(item) => result
+ * @param {Function} onResult    - Callback chamado com o resultado de cada tarefa
+ */
+async function runWithConcurrency(items, concurrency, fn, onResult) {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      const result = await fn(item);
+      onResult(result);
+    }
+  });
+  await Promise.all(workers);
 }
 
 router.get('/report', validate(OvernightReportQuerySchema, 'query'), async (req, res) => {
@@ -102,25 +123,21 @@ router.get('/report', validate(OvernightReportQuerySchema, 'query'), async (req,
     // Separar em cache (disponível instantaneamente) vs para buscar (necessita API SSX)
     const cachedItems = [];
     const tasksToFetch = [];
-    
+
     for (const task of allTasks) {
       const cached = stmts.getResult.get(task.plate, task.dateStr);
       if (cached) {
         cachedItems.push({
           placa: cached.placa, data: cached.data, situacao: cached.situacao,
-          base: cached.base_nome, lat: cached.lat, lng: cached.lng, cached: true
+          base: cached.base_nome, lat: cached.lat, lng: cached.lng, cached: true,
         });
       } else {
         tasksToFetch.push(task);
       }
     }
 
-    let currentDelay = 2000; // Backoff adaptativo inicial (2s)
     let done = 0;
-    
-    // Calcula estimativa mais precisa
-    const estSec = Math.round((tasksToFetch.length * (currentDelay + 500)) / 1000);
-    send({ type: 'start', total, cached: cachedItems.length, toFetch: tasksToFetch.length, estSec });
+    send({ type: 'start', total, cached: cachedItems.length, toFetch: tasksToFetch.length });
 
     // 1. Enviar resultados cacheados imediatamente
     for (const row of cachedItems) {
@@ -128,40 +145,34 @@ router.get('/report', validate(OvernightReportQuerySchema, 'query'), async (req,
       send({ type: 'result', done, total, row });
     }
 
-    // 2. Fila serial com backoff adaptativo para itens sem cache
-    let first = true;
-    for (const { plate, dateStr } of tasksToFetch) {
-      if (!first) await sleep(currentDelay);
-      first = false;
-
-      const integrationCode = plateToCode[plate];
-      let row;
-      
-      if (!integrationCode) {
-        row = { placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null };
-      } else {
+    // 2. Pool de concorrência para itens sem cache — N workers em paralelo
+    //    O throttle global em ssx-client.js garante espaçamento entre req HTTP.
+    await runWithConcurrency(
+      tasksToFetch,
+      REPORT_CONCURRENCY,
+      async ({ plate, dateStr }) => {
+        const integrationCode = plateToCode[plate];
+        if (!integrationCode) {
+          return { placa: plate, data: dateStr, situacao: 'sem_dados', base: null, lat: null, lng: null };
+        }
         try {
           const analysis = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
-          row = { placa: plate, data: dateStr, ...analysis };
-          
-          // Sucesso → Salva no cache & acelera ligeiramente a fila
+          const row = { placa: plate, data: dateStr, ...analysis };
           stmts.insertResult.run(
             plate, dateStr, row.situacao,
             row.base || null, row.lat || null, row.lng || null
           );
-          currentDelay = Math.max(currentDelay * 0.85, 1000); // min 1s
-          
+          return row;
         } catch (err) {
           logger.error({ err, plate, dateStr }, '[overnight report] Erro ao analisar veículo');
-          row = { placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null };
-          
-          // Falha → Backoff pesado
-          currentDelay = Math.min(currentDelay * 2, 15000); // max 15s
+          return { placa: plate, data: dateStr, situacao: 'erro', base: null, lat: null, lng: null };
         }
+      },
+      (row) => {
+        done++;
+        send({ type: 'result', done, total, row });
       }
-      done++;
-      send({ type: 'result', done, total, row });
-    }
+    );
 
     send({ type: 'done', total });
   } catch (err) {

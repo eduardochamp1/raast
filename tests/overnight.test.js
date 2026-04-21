@@ -9,11 +9,11 @@ const CONFIG = { from: '22:00', to: '06:00' };
 
 // Helper: cria posição com Speed=0 (parado)
 function stopped(lat, lng, isoDate) {
-  return { Latitude: lat, Longitude: lng, Speed: 0, PositionDate: isoDate };
+  return { Latitude: lat, Longitude: lng, Speed: 0, EventDate: isoDate };
 }
 // Helper: cria posição com Speed>0 (em movimento)
 function moving(lat, lng, isoDate) {
-  return { Latitude: lat, Longitude: lng, Speed: 50, PositionDate: isoDate };
+  return { Latitude: lat, Longitude: lng, Speed: 50, EventDate: isoDate };
 }
 
 // ─── haversineKm ────────────────────────────────────────────────────────────
@@ -96,11 +96,11 @@ test('longest stop outside base wins even if brief stop was inside base', async 
 test('vehicle moving all night (no stop ≥ 30 min) → situacao: fora at most frequent point', async () => {
   // All positions moving, clustered around SP coords
   fetchAllPositions.mockResolvedValue([
-    moving(-23.550, -46.633, '2026-04-15T22:00:00'),
-    moving(-23.551, -46.634, '2026-04-15T23:00:00'),
-    moving(-23.550, -46.633, '2026-04-16T00:00:00'),
-    moving(-23.551, -46.633, '2026-04-16T01:00:00'),
-    moving(-19.913, -43.941, '2026-04-16T04:00:00'),  // one ping near base — minority
+    { Latitude: -23.5, Longitude: -46.6, EventDate: '2026-04-14T20:00:00Z', Speed: 50 },
+    { Latitude: -23.5, Longitude: -46.6, EventDate: '2026-04-14T21:00:00Z', Speed: 0 },
+    { Latitude: -23.501, Longitude: -46.601, EventDate: '2026-04-14T22:00:00Z', Speed: 0 },
+    { Latitude: -23.5, Longitude: -46.6, EventDate: '2026-04-15T04:00:00Z', Speed: 0 },
+    { Latitude: -23.5, Longitude: -46.6, EventDate: '2026-04-15T05:00:00Z', Speed: 40 },
   ]);
   const result = await analyzeVehicleNight('123', '2026-04-15', BASES, CONFIG);
   expect(result.situacao).toBe('fora');

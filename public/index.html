@@ -114,12 +114,36 @@
         <div class="loading-spinner"></div>
         <div class="loading-text">Buscando histórico...</div>
       </div>
+      
+      <!-- PAINEL INFERIOR (Tabela Histórica) -->
+      <div id="bottomPanel" class="bottom-panel">
+        <div class="bottom-panel-header">
+          Histórico de posições
+          <button id="closeBottomPanel">×</button>
+        </div>
+        <div class="table-container">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Unidade Rastreada</th>
+                <th>Data / Hora</th>
+                <th>Velocidade</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <!-- Linhas geradas via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
     </main>
 
   </div>
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-polylinedecorator/1.6.0/leaflet.polylineDecorator.min.js"></script>
 
   <!-- App scripts -->
   <script src="/js/nav.js"></script>

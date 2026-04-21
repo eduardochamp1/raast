@@ -45,19 +45,27 @@ function initCron() {
       const vehicles    = await getCachedVehicles();
       const plateToCode = Object.fromEntries(vehicles.map((v) => [v.plate, v.integrationCode]));
 
-      let inserted = 0;
-      let currentDelay = 2000;
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
+      // Monta todas as tarefas (grupo + placa) para processar em paralelo
+      const tasks = [];
       for (const group of groups) {
         const placas = stmts.getGroupPlacas.all(group.id).map((r) => r.placa);
         for (const plate of placas) {
+          tasks.push({ plate, group });
+        }
+      }
+
+      let inserted = 0;
+
+      // Pool de concorrência N=2 (conservador — roda sem usuário esperando)
+      // O throttle global em ssx-client.js garante espaçamento entre req HTTP.
+      const queue = [...tasks];
+      const workers = Array.from({ length: Math.min(2, tasks.length) }, async () => {
+        while (queue.length > 0) {
+          const { plate, group } = queue.shift();
           const integrationCode = plateToCode[plate];
           if (!integrationCode) continue;
 
-          let situacao;
-          let lat = null;
-          let lng = null;
+          let situacao, lat = null, lng = null;
 
           // Verifica cache
           const cached = stmts.getResult.get(plate, dateStr);
@@ -66,8 +74,6 @@ function initCron() {
             lat = cached.lat;
             lng = cached.lng;
           } else {
-            // Se não está no cache, processa com backoff
-            await sleep(currentDelay);
             try {
               const result = await analyzeVehicleNight(integrationCode, dateStr, bases, config);
               situacao = result.situacao;
@@ -79,19 +85,14 @@ function initCron() {
                 plate, dateStr, situacao,
                 result.base || null, lat || null, lng || null
               );
-              // Sucesso → acelera
-              currentDelay = Math.max(currentDelay * 0.85, 1000); // acelera (min 1s)
             } catch (err) {
               logger.error({ err, plate }, '[cron] Erro ao analisar veículo');
-              // Erro → backoff pesado
-              currentDelay = Math.min(currentDelay * 2, 15000); // máximo 15s
               continue; // pula este veículo, sem cache nem alerta
             }
           }
 
           if (situacao === 'fora' || situacao === 'uso_fds') {
-             // Só insere se não existir o alerta ainda
-            if (!stmts.alertExists.get(plate, dateStr)) { 
+            if (!stmts.alertExists.get(plate, dateStr)) {
               stmts.alertInsert.run(
                 randomUUID(), dateStr, plate, group.nome,
                 lat ?? null, lng ?? null
@@ -100,7 +101,9 @@ function initCron() {
             }
           }
         }
-      }
+      });
+
+      await Promise.all(workers);
 
       logger.info({ dateStr, inserted }, '[cron] Análise de pernoite concluída');
     } catch (err) {

@@ -19,7 +19,7 @@ function addHours(date, hours) {
 
 /**
  * Busca todas as posições de um veículo no período, superando o limite de 500 registros
- * por chamada da SSX por meio de janelas de 6 horas.
+ * por chamada da SSX por meio de janelas de 6 horas (processadas em série).
  *
  * @param {string} integrationCode - Código de integração do veículo na SSX
  * @param {string} startISO - Início do período em tempo LOCAL sem offset de timezone,
@@ -38,14 +38,12 @@ async function fetchAllPositions(integrationCode, startISO, endISO) {
 
     const conditions = [
       { PropertyName: 'TrackedUnitIntegrationCode', Condition: 'Equal', Value: integrationCode },
-      { PropertyName: 'PositionDate', Condition: 'GreaterThanOrEqualTo', Value: toISO(windowStart) },
-      { PropertyName: 'PositionDate', Condition: 'LessThan', Value: toISO(windowEnd) }
+      { PropertyName: 'EventDate', Condition: 'GreaterThanOrEqualTo', Value: toISO(windowStart) },
+      { PropertyName: 'EventDate', Condition: 'LessThan', Value: toISO(windowEnd) },
     ];
 
     const data = await getPositionHistory(conditions);
-    if (Array.isArray(data)) {
-      results.push(...data);
-    }
+    if (Array.isArray(data)) results.push(...data);
 
     windowStart = windowEnd;
   }
@@ -53,4 +51,39 @@ async function fetchAllPositions(integrationCode, startISO, endISO) {
   return results;
 }
 
-module.exports = { fetchAllPositions };
+const FALLBACK_HOURS = 72;
+
+/**
+ * Busca a última posição conhecida do veículo olhando para trás no tempo (até 72h).
+ * Utilizado como fallback quando o veículo fica dias estacionado e o rastreador entra em sleep.
+ */
+async function fetchLastKnownPosition(integrationCode, referenceISO) {
+  let periodEnd = new Date(referenceISO);
+  const maxStart = addHours(periodEnd, -FALLBACK_HOURS);
+  
+  // Varre de trás para frente em janelas de 12h
+  while (periodEnd > maxStart) {
+    const windowStart = addHours(periodEnd, -12);
+    
+    const conditions = [
+      { PropertyName: 'TrackedUnitIntegrationCode', Condition: 'Equal', Value: integrationCode },
+      { PropertyName: 'EventDate', Condition: 'GreaterThanOrEqualTo', Value: toISO(windowStart) },
+      { PropertyName: 'EventDate', Condition: 'LessThan', Value: toISO(periodEnd) },
+    ];
+    
+    const data = await getPositionHistory(conditions);
+    if (Array.isArray(data) && data.length > 0) {
+      // Ordena decrescente (mais recente primeiro)
+      data.sort((a, b) => new Date(b.EventDate) - new Date(a.EventDate));
+      // Garante que a posição tem lat/lng
+      const valid = data.find(p => p.Latitude != null && p.Longitude != null);
+      if (valid) return valid;
+    }
+    
+    periodEnd = windowStart;
+  }
+  
+  return null;
+}
+
+module.exports = { fetchAllPositions, fetchLastKnownPosition };

@@ -1,4 +1,4 @@
-const { fetchAllPositions } = require('./pagination');
+const { fetchAllPositions, fetchLastKnownPosition } = require('./pagination');
 
 // Tempo mínimo de parada (Speed=0 contínuo) para qualificar como "pernoite na base"
 const MIN_STOP_MS = 30 * 60 * 1000; // 30 minutos em ms
@@ -56,8 +56,8 @@ function findLongestStop(sorted) {
     while (i < sorted.length && (sorted[i].Speed ?? 0) === 0) i++;
     const stopEnd = i - 1; // inclusive
 
-    const startMs    = new Date(sorted[stopStart].PositionDate).getTime();
-    const endMs      = new Date(sorted[stopEnd].PositionDate).getTime();
+    const startMs    = new Date(sorted[stopStart].EventDate).getTime();
+    const endMs      = new Date(sorted[stopEnd].EventDate).getTime();
     const durationMs = endMs - startMs;
 
     if (durationMs >= MIN_STOP_MS) {
@@ -124,11 +124,26 @@ async function analyzeVehicleNight(integrationCode, dateStr, bases, config) {
   );
 
   if (!positions || positions.length === 0) {
+    // ── FALLBACK: Rastreador em sleep sem gerar pings no período ──
+    const lastPos = await fetchLastKnownPosition(integrationCode, toLocalISO(windowStart));
+    if (lastPos && lastPos.Latitude != null && lastPos.Longitude != null) {
+      const lat = lastPos.Latitude;
+      const lng = lastPos.Longitude;
+      
+      for (const base of bases) {
+        if (haversineKm(lat, lng, base.lat, base.lng) * 1000 <= base.raio) {
+          return { situacao: isWeekend ? 'base_fds' : 'base', base: base.nome, lat, lng };
+        }
+      }
+      return { situacao: isWeekend ? 'uso_fds' : 'fora', base: null, lat, lng };
+    }
+    
+    // Se não encontrou fallback em 72h
     return { situacao: 'sem_dados', base: null, lat: null, lng: null };
   }
 
   const sorted = [...positions].sort(
-    (a, b) => new Date(a.PositionDate) - new Date(b.PositionDate)
+    (a, b) => new Date(a.EventDate) - new Date(b.EventDate)
   );
 
   if (isWeekend) {
